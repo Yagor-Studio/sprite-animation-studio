@@ -1,0 +1,54 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Ambienti virtuali
+venv/
+.venv/
+env/
+ENV/
+
+# --- Tooling / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Log e cache ---
+*.log
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# --- Config locali / segreti ---
+.env
+*.local
+
+# --- Asset di test / sviluppo pesanti (adatta se necessario) ---
+# Scommenta o adatta questi path se accumuli sprite/spritesheet di test
+# che non vuoi versionare nella repo principale
+# /test_assets/
+# /samples/*.png
+# /samples/*.gif
+
+# --- File temporanei generati dal tool ---
+*.tmp
+*.bak
+output/
+
+# --- Config e profili locali auto-generati dall'app ---
+sprite_config.json
+profiles/
