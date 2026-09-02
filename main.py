@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sprite Animation Studio v0.5 - con profili, drag & drop, ordinamento, eliminazione
+Sprite Animation Studio v0.6 - Gerarchia Profilo → Animazioni
 """
 
 import json
@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from pathlib import Path
 import shutil
+import traceback
 
 try:
     from PIL import Image, ImageTk
@@ -35,10 +36,10 @@ TICK_MS = 28
 # Core logic
 # ---------------------------------------------------------------------
 
-def build_pattern(code: str) -> re.Pattern:
-    code_esc = re.escape(code)
+def build_pattern(prefix: str) -> re.Pattern:
+    prefix_esc = re.escape(prefix)
     return re.compile(
-        rf"^{code_esc}([A-Za-z])([0-8])(?:([A-Za-z])([0-8]))?\.(png|jpe?g)$",
+        rf"^{prefix_esc}([A-Za-z])([0-8])(?:([A-Za-z])([0-8]))?\.(png|jpe?g)$",
         re.IGNORECASE,
     )
 
@@ -47,8 +48,8 @@ def is_valid_code(code) -> bool:
         return False
     return 1 <= len(code) <= 6 and code.isalnum()
 
-def sort_sprite_files(files, code: str = ''):
-    pattern = build_pattern(code) if code else None
+def sort_sprite_files(files, prefix: str = ''):
+    pattern = build_pattern(prefix) if prefix else None
     def key(p):
         if pattern:
             m = pattern.match(p.name)
@@ -118,6 +119,76 @@ def export_animation(frames, out_path, fmt, durations_ms, loop=True):
         raise ValueError(f"Formato non supportato: {fmt}")
 
 # ---------------------------------------------------------------------
+# Data models
+# ---------------------------------------------------------------------
+
+class AnimationData:
+    def __init__(self, name="", code="", file_paths=None, durations=None):
+        self.name = name
+        self.code = code.upper()
+        self.file_paths = file_paths if file_paths is not None else []
+        self.durations = durations if durations is not None else []
+
+    def to_dict(self):
+        rel_paths = []
+        for p in self.file_paths:
+            try:
+                rel = p.relative_to(PROFILES_DIR.parent)
+            except ValueError:
+                rel = p
+            rel_paths.append(str(rel))
+        return {
+            "name": self.name,
+            "code": self.code,
+            "files": rel_paths,
+            "durations": self.durations
+        }
+
+    @classmethod
+    def from_dict(cls, data, base_dir):
+        paths = []
+        for rel in data.get("files", []):
+            p = Path(rel)
+            if not p.is_absolute():
+                p = base_dir / p
+            if p.exists():
+                paths.append(p)
+        return cls(
+            name=data.get("name", ""),
+            code=data.get("code", ""),
+            file_paths=paths,
+            durations=data.get("durations", [])
+        )
+
+class ProfileData:
+    def __init__(self, name="", code="", anim_type="", animations=None):
+        self.name = name
+        self.code = code.upper()
+        self.type = anim_type
+        self.animations = animations if animations is not None else []
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "code": self.code,
+            "type": self.type,
+            "animations": [a.to_dict() for a in self.animations]
+        }
+
+    @classmethod
+    def from_dict(cls, data, base_dir):
+        anims = []
+        for a_data in data.get("animations", []):
+            anim = AnimationData.from_dict(a_data, base_dir)
+            anims.append(anim)
+        return cls(
+            name=data.get("name", ""),
+            code=data.get("code", ""),
+            anim_type=data.get("type", ""),
+            animations=anims
+        )
+
+# ---------------------------------------------------------------------
 # Timeline Model
 # ---------------------------------------------------------------------
 
@@ -128,12 +199,26 @@ class TimelineModel:
         self.durations_ms = []
         self._total_duration = 0
 
-    def load(self, paths, anchor='bottom'):
+    def load_from_paths(self, paths, anchor='bottom'):
         imgs = load_and_pad_images(paths, anchor)
         self.frames = imgs
         self.file_paths = paths
         self.durations_ms = [DEFAULT_DURATION_MS] * len(imgs)
         self._calc_total()
+
+    def load_from_animation(self, anim: AnimationData, anchor='bottom'):
+        self.load_from_paths(anim.file_paths, anchor)
+        if len(self.durations_ms) == len(anim.durations):
+            self.durations_ms = anim.durations[:]
+            self._calc_total()
+
+    def to_animation(self, name, code):
+        return AnimationData(
+            name=name,
+            code=code,
+            file_paths=self.file_paths[:],
+            durations=self.durations_ms[:]
+        )
 
     def _calc_total(self):
         self._total_duration = sum(self.durations_ms)
@@ -173,47 +258,14 @@ class TimelineModel:
         self.durations_ms.clear()
         self._total_duration = 0
 
-    def serialize(self, profile_name, code, anchor, loop):
-        rel_paths = []
-        for p in self.file_paths:
-            try:
-                rel = p.relative_to(PROFILES_DIR.parent)
-            except ValueError:
-                rel = p
-            rel_paths.append(str(rel))
-        return {
-            "name": profile_name,
-            "code": code,
-            "anchor": anchor,
-            "loop": loop,
-            "files": rel_paths,
-            "durations": self.durations_ms,
-        }
-
-    def deserialize(self, data, base_dir):
-        paths = []
-        for rel in data["files"]:
-            p = Path(rel)
-            if not p.is_absolute():
-                p = base_dir / p
-            if p.exists():
-                paths.append(p)
-        if paths:
-            self.load(paths, data.get("anchor", "bottom"))
-            if len(self.durations_ms) == len(data.get("durations", [])):
-                self.durations_ms = data["durations"]
-                self._calc_total()
-            return True
-        return False
-
 # ---------------------------------------------------------------------
-# GUI principale
+# GUI
 # ---------------------------------------------------------------------
 
 class SpriteStudioApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Sprite Animation Studio v0.5")
+        self.root.title("Sprite Animation Studio v0.6")
         self.root.geometry("1100x720")
         self.root.minsize(1000, 600)
         self.root.configure(bg='white')
@@ -224,6 +276,7 @@ class SpriteStudioApp:
         self.code_var = tk.StringVar()
         self.folder_var = tk.StringVar(value=str(Path.cwd()))
         self.manual_files = []
+
         self.out_folder_var = tk.StringVar(value=self.config.get('out_folder', str(Path.cwd())))
         self.out_name_var = tk.StringVar(value="sprite_anim")
         self.format_var = tk.StringVar(value=self.config.get('format', 'APNG'))
@@ -235,23 +288,22 @@ class SpriteStudioApp:
         self.is_playing = False
         self._after_id = None
 
-        self.current_profile_name = tk.StringVar(value="")
-        self.profile_list = []
-        self.selected_thumb_index = -1
+        self.current_profile = None
+        self.current_animation_index = -1
+        self.selected_tree_item = None
 
-        # Autocomplete
         self.autocomplete_list = []
         self.autocomplete_popup = None
         self.autocomplete_listbox = None
         self.autocomplete_selected_index = -1
 
-        # Drag & drop per riordinamento
         self.drag_start_index = None
         self.drag_current_index = None
+        self.selected_thumb_index = -1
 
         self._build_ui()
         self._update_autocomplete_list()
-        self._refresh_profile_list()
+        self._refresh_tree()
         self._bind_global_keys()
 
     # -------------------- Config --------------------
@@ -281,22 +333,29 @@ class SpriteStudioApp:
         main_pane = ttk.PanedWindow(self.root, orient='horizontal')
         main_pane.pack(fill='both', expand=True, padx=5, pady=5)
 
-        # ---- Pannello sinistro: profili ----
-        left_frame = ttk.Frame(main_pane, width=200)
+        # Left panel: tree
+        left_frame = ttk.Frame(main_pane, width=250)
         main_pane.add(left_frame, weight=0)
 
-        ttk.Label(left_frame, text="Profili", font=('Segoe UI', 12, 'bold')).pack(pady=(5,0))
-        self.profile_listbox = tk.Listbox(left_frame, height=15, selectmode='single')
-        self.profile_listbox.pack(fill='both', expand=True, padx=5, pady=5)
-        self.profile_listbox.bind('<<ListboxSelect>>', self._on_profile_select)
+        ttk.Label(left_frame, text="Profili / Animazioni", font=('Segoe UI', 12, 'bold')).pack(pady=(5,0))
+
+        self.tree = ttk.Treeview(left_frame, columns=('type',), show='tree', height=12)
+        self.tree.pack(fill='both', expand=True, padx=5, pady=5)
+        self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
 
         btn_frame = ttk.Frame(left_frame)
         btn_frame.pack(fill='x', padx=5, pady=2)
-        ttk.Button(btn_frame, text="Salva", command=self._save_profile).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="Carica", command=self._load_profile_from_file).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="Elimina", command=self._delete_profile).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Nuovo Profilo", command=self._new_profile).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Salva Profilo", command=self._save_profile).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Carica Profilo", command=self._load_profile_from_file).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Elimina", command=self._delete_selected).pack(side='left', padx=2)
 
-        # ---- Pannello destro ----
+        btn_frame2 = ttk.Frame(left_frame)
+        btn_frame2.pack(fill='x', padx=5, pady=2)
+        ttk.Button(btn_frame2, text="Nuova Animazione", command=self._new_animation).pack(side='left', padx=2)
+        ttk.Button(btn_frame2, text="Rinomina", command=self._rename_selected).pack(side='left', padx=2)
+
+        # Right panel
         right_frame = ttk.Frame(main_pane)
         main_pane.add(right_frame, weight=1)
 
@@ -317,7 +376,7 @@ class SpriteStudioApp:
         rb_manual.grid(row=2, column=0, sticky='w', padx=5, pady=2)
 
         self.code_frame = ttk.Frame(src_frame)
-        ttk.Label(self.code_frame, text="Codice:").pack(side='left')
+        ttk.Label(self.code_frame, text="Prefisso:").pack(side='left')
         self.code_entry = ttk.Entry(self.code_frame, textvariable=self.code_var, width=10)
         self.code_entry.pack(side='left', padx=5)
         self.code_entry.bind('<KeyRelease>', self._on_code_change)
@@ -337,7 +396,7 @@ class SpriteStudioApp:
         self.folder_lbl = ttk.Label(self.folder_frame, text="(nessuna)", foreground='#666')
         self.folder_lbl.pack(side='left', padx=5)
         self.folder_filter_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.folder_frame, text="Filtra per codice", variable=self.folder_filter_var, command=self._on_mode_change).pack(side='left', padx=5)
+        ttk.Checkbutton(self.folder_frame, text="Filtra per prefisso", variable=self.folder_filter_var, command=self._on_mode_change).pack(side='left', padx=5)
         self.folder_code_entry = ttk.Entry(self.folder_frame, textvariable=self.code_var, width=8)
         self.folder_code_entry.pack(side='left')
 
@@ -357,6 +416,7 @@ class SpriteStudioApp:
         ttk.Button(load_frame, text="Carica frame", command=self.load_frames).pack(side='left')
         self.status_lbl = ttk.Label(load_frame, text="Nessun frame caricato", foreground='#666')
         self.status_lbl.pack(side='left', padx=15)
+        ttk.Button(load_frame, text="Salva come Animazione", command=self._save_current_as_animation).pack(side='left', padx=5)
         ttk.Button(load_frame, text="Elimina frame", command=self._delete_selected_frame).pack(side='left', padx=5)
         ttk.Label(load_frame, text="(seleziona miniatura, poi Canc)").pack(side='left', padx=5)
 
@@ -391,7 +451,6 @@ class SpriteStudioApp:
         self.time_info_lbl = ttk.Label(player_controls, text="0s 0ms 0tick", foreground='#666')
         self.time_info_lbl.pack(side='right', padx=10)
 
-        # Frame count label
         timeline_toolbar = ttk.Frame(timeline_frame)
         timeline_toolbar.pack(fill='x', padx=5, pady=3)
         ttk.Label(timeline_toolbar, text="Frame:").pack(side='left')
@@ -435,74 +494,81 @@ class SpriteStudioApp:
         self.root.bind('<Delete>', lambda e: self._delete_selected_frame())
         self.root.bind('<BackSpace>', lambda e: self._delete_selected_frame())
 
-    # -------------------- Profili --------------------
+    # -------------------- Treeview --------------------
 
-    def _refresh_profile_list(self):
-        self.profile_listbox.delete(0, tk.END)
-        profile_files = sorted(PROFILES_DIR.glob("*.spriteprofile"))
-        names = [f.stem for f in profile_files]
-        for name in names:
-            self.profile_listbox.insert(tk.END, name)
-        self.profile_list = names
+    def _refresh_tree(self):
+        self.tree.delete(*self.tree.get_children())
+        if not self.current_profile:
+            return
+        profile_id = self.tree.insert("", "end", text=f"{self.current_profile.name} [{self.current_profile.code}]", values=(self.current_profile.type,))
+        self.tree.item(profile_id, open=True)
+        for idx, anim in enumerate(self.current_profile.animations):
+            anim_id = self.tree.insert(profile_id, "end", text=f"{anim.name} [{anim.code}]", values=("anim",))
+            self.tree.set(anim_id, "type", idx)
+        if self.current_animation_index >= 0 and self.current_animation_index < len(self.current_profile.animations):
+            children = self.tree.get_children(profile_id)
+            if self.current_animation_index < len(children):
+                self.tree.selection_set(children[self.current_animation_index])
+                self.tree.focus(children[self.current_animation_index])
 
-    def _on_profile_select(self, event):
-        sel = self.profile_listbox.curselection()
+    def _on_tree_select(self, event):
+        sel = self.tree.selection()
         if not sel:
             return
-        name = self.profile_listbox.get(sel[0])
-        self._load_profile_by_name(name)
-
-    def _load_profile_by_name(self, name):
-        profile_path = PROFILES_DIR / f"{name}.spriteprofile"
-        if not profile_path.exists():
-            messagebox.showerror("Errore", f"Profilo {name} non trovato.")
+        item = sel[0]
+        parent = self.tree.parent(item)
+        if parent == "":
             return
-        try:
-            with open(profile_path, 'r') as f:
-                data = json.load(f)
-            success = self.timeline.deserialize(data, PROFILES_DIR)
-            if success:
-                self.current_profile_name.set(name)
-                self.code_var.set(data.get("code", ""))
-                self.anchor_var.set(data.get("anchor", "bottom"))
-                self.loop_var.set(data.get("loop", True))
-                self.current_frame_idx = 0
-                self.selected_thumb_index = -1
-                self._update_display()
-                self.status_lbl.config(text=f"Profilo caricato: {name} ({len(self.timeline.frames)} frame)")
-            else:
-                messagebox.showwarning("Attenzione", "Alcuni file del profilo non sono stati trovati.")
-        except Exception as e:
-            messagebox.showerror("Errore", f"Impossibile caricare il profilo: {e}")
+        idx = self.tree.set(item, "type")
+        if idx != "" and idx.isdigit():
+            idx = int(idx)
+            if self.current_profile and 0 <= idx < len(self.current_profile.animations):
+                self.current_animation_index = idx
+                self._load_animation(idx)
 
-    def _save_profile(self):
-        if not self.timeline.frames:
-            messagebox.showwarning("Attenzione", "Nessun frame da salvare.")
+    def _load_animation(self, idx):
+        if not self.current_profile or idx < 0 or idx >= len(self.current_profile.animations):
             return
-        # Chiede sempre il nome
-        name = simpledialog.askstring("Nome profilo", "Inserisci un nome per il profilo:", initialvalue=self.current_profile_name.get())
+        anim = self.current_profile.animations[idx]
+        self.timeline.load_from_animation(anim, self.anchor_var.get())
+        self.current_frame_idx = 0
+        self.selected_thumb_index = -1
+        self._update_display()
+        self.status_lbl.config(text=f"Animazione caricata: {anim.name} ({len(self.timeline.frames)} frame)")
+
+    # -------------------- Profili / Animazioni --------------------
+
+    def _new_profile(self):
+        name = simpledialog.askstring("Nuovo Profilo", "Inserisci il nome del profilo:")
         if not name:
             return
-        self.current_profile_name.set(name)
-        data = self.timeline.serialize(
-            name,
-            self.code_var.get().strip(),
-            self.anchor_var.get(),
-            self.loop_var.get()
-        )
-        profile_path = PROFILES_DIR / f"{name}.spriteprofile"
+        code = simpledialog.askstring("Codice Profilo", "Inserisci il codice di 2 caratteri (es. CA):")
+        if not code or len(code) != 2 or not code.isalnum():
+            messagebox.showwarning("Attenzione", "Il codice deve essere di 2 caratteri alfanumerici.")
+            return
+        code = code.upper()
+        tipo = simpledialog.askstring("Tipo", "Inserisci il tipo (es. HUD, Monster):", initialvalue="HUD")
+        if tipo is None:
+            tipo = ""
+        self.current_profile = ProfileData(name=name, code=code, anim_type=tipo, animations=[])
+        self.current_animation_index = -1
+        self.timeline.clear()
+        self._refresh_tree()
+        self._update_display()
+        self.status_lbl.config(text=f"Nuovo profilo: {name}")
+
+    def _save_profile(self):
+        if not self.current_profile:
+            messagebox.showwarning("Attenzione", "Nessun profilo da salvare.")
+            return
+        filename = f"{self.current_profile.name}_{self.current_profile.code}.spriteprofile"
+        filepath = PROFILES_DIR / filename
+        data = self.current_profile.to_dict()
         try:
-            with open(profile_path, 'w') as f:
+            with open(filepath, 'w') as f:
                 json.dump(data, f, indent=2)
-            self._refresh_profile_list()
-            # Seleziona il profilo appena salvato
-            for i, n in enumerate(self.profile_list):
-                if n == name:
-                    self.profile_listbox.selection_clear(0, tk.END)
-                    self.profile_listbox.selection_set(i)
-                    break
-            self.status_lbl.config(text=f"Profilo salvato: {name}")
-            messagebox.showinfo("Fatto", f"Profilo salvato in:\n{profile_path}")
+            self.status_lbl.config(text=f"Profilo salvato: {filepath.name}")
+            messagebox.showinfo("Fatto", f"Profilo salvato in:\n{filepath}")
         except Exception as e:
             messagebox.showerror("Errore", f"Salvataggio fallito: {e}")
 
@@ -512,31 +578,121 @@ class SpriteStudioApp:
             filetypes=[("Sprite Profile", "*.spriteprofile")],
             initialdir=PROFILES_DIR
         )
-        if file_path:
-            name = Path(file_path).stem
-            dest = PROFILES_DIR / f"{name}.spriteprofile"
-            if dest != Path(file_path):
-                shutil.copy(file_path, dest)
-            self._refresh_profile_list()
-            self._load_profile_by_name(name)
-
-    def _delete_profile(self):
-        sel = self.profile_listbox.curselection()
-        if not sel:
-            messagebox.showinfo("Info", "Seleziona un profilo dalla lista.")
+        if not file_path:
             return
-        name = self.profile_listbox.get(sel[0])
-        if messagebox.askyesno("Conferma", f"Eliminare il profilo '{name}'?"):
-            profile_path = PROFILES_DIR / f"{name}.spriteprofile"
-            if profile_path.exists():
-                profile_path.unlink()
-            self._refresh_profile_list()
-            if self.current_profile_name.get() == name:
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+            profile = ProfileData.from_dict(data, PROFILES_DIR)
+            self.current_profile = profile
+            self.current_animation_index = -1
+            self.timeline.clear()
+            self._refresh_tree()
+            self._update_display()
+            self.status_lbl.config(text=f"Profilo caricato: {profile.name}")
+        except Exception as e:
+            messagebox.showerror("Errore", f"Caricamento fallito: {e}")
+
+    def _delete_selected(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        item = sel[0]
+        parent = self.tree.parent(item)
+        if parent == "":
+            if messagebox.askyesno("Conferma", f"Eliminare il profilo {self.current_profile.name}?"):
+                self.current_profile = None
+                self.current_animation_index = -1
                 self.timeline.clear()
-                self.current_profile_name.set("")
-                self.selected_thumb_index = -1
+                self._refresh_tree()
                 self._update_display()
                 self.status_lbl.config(text="Profilo eliminato")
+        else:
+            idx = self.tree.set(item, "type")
+            if idx != "" and idx.isdigit():
+                idx = int(idx)
+                if self.current_profile and 0 <= idx < len(self.current_profile.animations):
+                    anim_name = self.current_profile.animations[idx].name
+                    if messagebox.askyesno("Conferma", f"Eliminare l'animazione '{anim_name}'?"):
+                        del self.current_profile.animations[idx]
+                        self.current_animation_index = -1
+                        self.timeline.clear()
+                        self._refresh_tree()
+                        self._update_display()
+                        self.status_lbl.config(text=f"Animazione '{anim_name}' eliminata")
+
+    def _rename_selected(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        item = sel[0]
+        parent = self.tree.parent(item)
+        if parent == "":
+            new_name = simpledialog.askstring("Rinomina profilo", "Nuovo nome:", initialvalue=self.current_profile.name)
+            if new_name:
+                self.current_profile.name = new_name
+                self._refresh_tree()
+                self.status_lbl.config(text=f"Profilo rinominato in {new_name}")
+        else:
+            idx = self.tree.set(item, "type")
+            if idx != "" and idx.isdigit():
+                idx = int(idx)
+                if self.current_profile and 0 <= idx < len(self.current_profile.animations):
+                    anim = self.current_profile.animations[idx]
+                    new_name = simpledialog.askstring("Rinomina animazione", "Nuovo nome:", initialvalue=anim.name)
+                    if new_name:
+                        anim.name = new_name
+                        self._refresh_tree()
+                        self.status_lbl.config(text=f"Animazione rinominata in {new_name}")
+
+    def _new_animation(self):
+        if not self.current_profile:
+            messagebox.showwarning("Attenzione", "Prima crea o carica un profilo.")
+            return
+        name = simpledialog.askstring("Nuova Animazione", "Inserisci il nome dell'animazione:")
+        if not name:
+            return
+        code = simpledialog.askstring("Codice Animazione", "Inserisci il codice di 2 caratteri (es. PA):")
+        if not code or len(code) != 2 or not code.isalnum():
+            messagebox.showwarning("Attenzione", "Il codice deve essere di 2 caratteri alfanumerici.")
+            return
+        code = code.upper()
+        anim = AnimationData(name=name, code=code)
+        self.current_profile.animations.append(anim)
+        self.current_animation_index = len(self.current_profile.animations) - 1
+        self.timeline.clear()
+        self._refresh_tree()
+        self._update_display()
+        self.status_lbl.config(text=f"Nuova animazione: {name} (vuota)")
+
+    def _save_current_as_animation(self):
+        if not self.current_profile:
+            messagebox.showwarning("Attenzione", "Nessun profilo caricato.")
+            return
+        if not self.timeline.frames:
+            messagebox.showwarning("Attenzione", "Nessun frame da salvare.")
+            return
+        if self.current_animation_index >= 0 and self.current_animation_index < len(self.current_profile.animations):
+            anim = self.current_profile.animations[self.current_animation_index]
+            if messagebox.askyesno("Conferma", f"Sovrascrivere l'animazione '{anim.name}' con la timeline corrente?"):
+                new_anim = self.timeline.to_animation(anim.name, anim.code)
+                self.current_profile.animations[self.current_animation_index] = new_anim
+                self._refresh_tree()
+                self.status_lbl.config(text=f"Animazione '{anim.name}' aggiornata")
+                return
+        name = simpledialog.askstring("Nome Animazione", "Inserisci il nome della nuova animazione:")
+        if not name:
+            return
+        code = simpledialog.askstring("Codice Animazione", "Inserisci il codice di 2 caratteri:", initialvalue="AA")
+        if not code or len(code) != 2 or not code.isalnum():
+            messagebox.showwarning("Attenzione", "Codice non valido.")
+            return
+        code = code.upper()
+        new_anim = self.timeline.to_animation(name, code)
+        self.current_profile.animations.append(new_anim)
+        self.current_animation_index = len(self.current_profile.animations) - 1
+        self._refresh_tree()
+        self.status_lbl.config(text=f"Nuova animazione '{name}' salvata")
 
     # -------------------- Autocomplete --------------------
 
@@ -730,47 +886,47 @@ class SpriteStudioApp:
         if self.timeline.frames:
             self.load_frames()
 
-    # -------------------- Caricamento frame --------------------
+    # -------------------- Load frames --------------------
 
     def _gather_paths(self):
         m = self.mode.get()
-        code = self.code_var.get().strip()
+        prefix = self.code_var.get().strip().upper()
         if m == 'code':
             if not self.folder_var.get():
                 messagebox.showwarning("Attenzione", "Scegli una cartella.")
                 return []
-            if not is_valid_code(code):
-                messagebox.showwarning("Attenzione", "Codice non valido (1-6 alfanumerici).")
+            if len(prefix) < 4:
+                messagebox.showwarning("Attenzione", "Il prefisso deve essere di almeno 4 caratteri (es. CAPA).")
                 return []
-            pattern = build_pattern(code)
+            pattern = build_pattern(prefix)
             folder = Path(self.folder_var.get())
             files = [f for f in folder.iterdir() if f.is_file() and pattern.match(f.name)]
-            return sort_sprite_files(files, code)
+            return sort_sprite_files(files, prefix)
         elif m == 'folder':
             if not self.folder_var.get():
                 messagebox.showwarning("Attenzione", "Scegli una cartella.")
                 return []
             folder = Path(self.folder_var.get())
             if self.folder_filter_var.get():
-                if not is_valid_code(code):
-                    messagebox.showwarning("Attenzione", "Codice non valido per filtro.")
+                if len(prefix) < 4:
+                    messagebox.showwarning("Attenzione", "Il prefisso deve essere di almeno 4 caratteri.")
                     return []
-                pattern = build_pattern(code)
+                pattern = build_pattern(prefix)
                 files = [f for f in folder.iterdir() if f.is_file() and pattern.match(f.name)]
-                return sort_sprite_files(files, code)
+                return sort_sprite_files(files, prefix)
             else:
                 files = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in IMG_EXTENSIONS]
                 return sort_sprite_files(files, '')
-        else:  # manual
+        else:
             if not self.manual_files:
                 messagebox.showwarning("Attenzione", "Nessuna immagine selezionata.")
                 return []
-            if code:
-                pattern = build_pattern(code)
+            if prefix:
+                pattern = build_pattern(prefix)
                 files = [f for f in self.manual_files if pattern.match(f.name)]
             else:
                 files = self.manual_files
-            return sort_sprite_files(files, code)
+            return sort_sprite_files(files, prefix)
 
     def load_frames(self):
         self._stop()
@@ -782,7 +938,7 @@ class SpriteStudioApp:
             self._update_display()
             return
         anchor = self.anchor_var.get()
-        self.timeline.load(paths, anchor)
+        self.timeline.load_from_paths(paths, anchor)
         if not self.timeline.frames:
             self.status_lbl.config(text="Errore nel caricamento")
             return
@@ -842,7 +998,7 @@ class SpriteStudioApp:
                         base.putpixel((xx,yy), col)
         return base
 
-    # -------------------- Thumbnails (con drag & drop e selezione) --------------------
+    # -------------------- Thumbnails --------------------
 
     def _bind_thumb_events(self):
         self.thumb_canvas.bind('<Button-1>', self._on_thumb_press)
@@ -868,28 +1024,20 @@ class SpriteStudioApp:
             self.thumb_refs.append(tk_thumb)
             x = i * (thumb_w + spacing)
             y = 5
-            # Sfondo per evidenziare selezione
             if i == self.selected_thumb_index:
                 self.thumb_canvas.create_rectangle(x-2, y-2, x+thumb_w+2, y+thumb_h+2, outline='#ff0000', fill='', width=2)
             self.thumb_canvas.create_rectangle(x, y, x+thumb_w, y+thumb_h, outline='#aaa', fill='', width=1)
             self.thumb_canvas.create_image(x, y, anchor='nw', image=tk_thumb)
             dur = self.timeline.durations_ms[i] if i < len(self.timeline.durations_ms) else 0
-            # Rende cliccabile per selezione e cambio durata
             rect_id = self.thumb_canvas.create_rectangle(x, y, x+thumb_w, y+thumb_h, outline='', fill='', tags=(f'thumb_{i}',))
             self.thumb_canvas.tag_bind(f'thumb_{i}', '<Button-1>', lambda e, idx=i: self._on_thumb_click(idx))
             self.thumb_canvas.create_text(x+thumb_w//2, y+thumb_h+2, text=f"{dur}ms", font=('Segoe UI',7), anchor='n')
 
     def _on_thumb_click(self, idx):
-        # Seleziona il frame
         self.selected_thumb_index = idx
         self._draw_thumbnails()
-        # Se è doppio click? No, singolo click seleziona. Per cambiare durata si usa il menu contestuale?
-        # Per semplicità: se clicchi con il tasto sinistro seleziona, con tasto destro (o shift+click) apri dialog per durata.
-        # Implemento click con shift per durata (come scorciatoia).
-        # Oppure: dopo la selezione, l'utente può usare lo spinbox "Vel. base" che cambia tutti.
-        # Per cambiare singolo frame, clicca tenendo premuto Shift.
-        # Gestiamo shift+click nel bind.
-        pass  # lasciamo così, più avanti implementiamo menu context per durata
+        # Cambia durata del frame con click + Shift (opzionale)
+        # Per ora solo selezione
 
     def _on_thumb_press(self, event):
         items = self.thumb_canvas.find_overlapping(event.x, event.y, event.x+1, event.y+1)
@@ -919,7 +1067,6 @@ class SpriteStudioApp:
         else:
             target = int(x // (thumb_w + spacing))
         if target != self.drag_current_index and target != self.drag_start_index:
-            # Muovi il frame nella timeline
             self.timeline.move_frame(self.drag_start_index, target)
             self.drag_start_index = target
             self.drag_current_index = target
@@ -1032,9 +1179,18 @@ class SpriteStudioApp:
 # ---------------------------------------------------------------------
 
 def main():
-    root = TkinterDnD.Tk() if DND_AVAILABLE else tk.Tk()
-    app = SpriteStudioApp(root)
-    root.mainloop()
+    try:
+        root = TkinterDnD.Tk() if DND_AVAILABLE else tk.Tk()
+        app = SpriteStudioApp(root)
+        root.mainloop()
+    except Exception as e:
+        # Se c'è un errore all'avvio, mostriamo il traceback in un messaggio
+        err_msg = traceback.format_exc()
+        try:
+            messagebox.showerror("Errore fatale", f"Si è verificato un errore:\n\n{err_msg}")
+        except:
+            print(err_msg)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
