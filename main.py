@@ -1,17 +1,34 @@
 #!/usr/bin/env python3
 """
-Sprite Animation Studio - Doom-style sprite manager with interactive timeline
-----------------------------------------------------------------------------
-Tool per sviluppatori di sprite (stile Doom/GZDoom): raccoglie sprite,
-li mostra in una timeline interattiva, regola durata per frame,
-esporta in GIF/APNG con controllo tick/ms.
+Sprite Animation Tester / Converter
+------------------------------------
+Tool per sviluppatori di sprite (stile Doom/GZDoom): raccoglie sprite da
+diverse fonti, li mostra come una vera ANIMAZIONE in-app (play/pause/stop/
+loop) ed esporta la sequenza in un file animato (GIF o APNG) prima di
+impacchettarla nel pk3.
+
+Convenzione di naming supportata (stile Doom):
+    BASE + LETTERA_FRAME[A-Z] + ROTAZIONE[1-8] (+ opzionale 2a coppia per mirror)
+    Esempio: "PISG" + "A" + "1"  ->  PISGA1.png
+             "PISG" + "A" + "1" + "A" + "8" -> PISGA1A8.png (frame mirrorato)
+
+Formati di export:
+    - GIF  : massima compatibilita', ma trasparenza binaria (niente alpha morbido)
+    - APNG : trasparenza RGBA completa, ideale per sprite con antialiasing/glow
+
+Dipendenze:
+    pip install pillow
+    pip install tkinterdnd2   (opzionale, abilita il drag & drop)
+
+Per creare un eseguibile standalone (Windows/macOS/Linux):
+    pip install pyinstaller
+    pyinstaller --onefile --windowed sprite_converter.py
 """
 
-import json
 import re
 import sys
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 
 try:
@@ -20,6 +37,8 @@ except ImportError:
     print("ERRORE: Pillow non installato. Esegui: pip install pillow")
     sys.exit(1)
 
+# Drag & drop e' opzionale: se tkinterdnd2 non c'e', il tool funziona
+# comunque, semplicemente senza quella scorciatoia.
 try:
     from tkinterdnd2 import TkinterDnD, DND_FILES
     DND_AVAILABLE = True
@@ -27,577 +46,514 @@ except ImportError:
     DND_AVAILABLE = False
 
 IMG_EXTENSIONS = (".png", ".jpg", ".jpeg")
-CONFIG_FILE = Path(__file__).parent / "sprite_config.json"
-DEFAULT_DURATION_MS = 120
-TICK_MS = 28  # standard Doom tick ~ 28ms
 
-# ---------------------------------------------------------------------
-# Core logic
-# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Logica pura (testabile senza GUI)
+# ---------------------------------------------------------------------------
 
 def build_pattern(code: str) -> re.Pattern:
+    """Costruisce la regex per il naming stile Doom a partire dal codice base.
+    BASE + [A-Z] + [0-8] + opzionale([A-Z] + [0-8]) + estensione
+    """
     code_esc = re.escape(code)
     return re.compile(
-        rf"^{code_esc}([A-Za-z])([0-8])(?:([A-Za-z])([0-8]))?\.(png|jpe?g)$",
+        rf"^{code_esc}([A-Za-z])([0-8])([A-Za-z][0-8])?\.(png|jpe?g)$",
         re.IGNORECASE,
     )
 
-def is_valid_code(code) -> bool:
-    if not code:
-        return False
+
+def find_matching_files(folder: Path, code: str, recursive: bool = False):
+    """Cerca in `folder` i file che rispettano BASE+lettera+rotazione."""
+    pattern = build_pattern(code)
+    files = folder.rglob("*") if recursive else folder.iterdir()
+    matches = [f for f in files if f.is_file() and pattern.match(f.name)]
+    return sort_sprite_files(matches, code)
+
+
+def find_all_images(folder: Path, recursive: bool = False):
+    """Prende tutte le immagini png/jpg in una cartella, senza filtro nome."""
+    files = folder.rglob("*") if recursive else folder.iterdir()
+    matches = [f for f in files if f.is_file() and f.suffix.lower() in IMG_EXTENSIONS]
+    return sorted(matches, key=lambda p: p.name.lower())
+
+
+def sort_sprite_files(files, code: str):
+    """Ordina per lettera-frame poi per rotazione (naming Doom-style).
+    Se il pattern non combacia (es. drag&drop libero), fallback su nome file.
+    """
+    pattern = build_pattern(code) if code else None
+
+    def sort_key(path: Path):
+        if pattern:
+            m = pattern.match(path.name)
+            if m:
+                letter, digit = m.group(1).upper(), m.group(2)
+                return (letter, digit)
+        return (path.name.lower(), "")
+
+    return sorted(files, key=sort_key)
+
+
+def is_valid_code(code: str) -> bool:
     return 1 <= len(code) <= 6 and code.isalnum()
 
-def sort_sprite_files(files, code: str = ''):
-    pattern = build_pattern(code) if code else None
-    def key(p):
-        if pattern:
-            m = pattern.match(p.name)
-            if m:
-                g = m.groups()
-                l1, n1 = g[0].upper(), g[1]
-                # seconda coppia opzionale
-                if g[2] is not None and g[3] is not None:
-                    l2, n2 = g[2].upper(), g[3]
-                    return (l1, n1, l2, n2)
-                else:
-                    return (l1, n1, '', '')
-        return (p.name.lower(), '', '', '')
-    return sorted(files, key=key)
 
-def load_and_pad_images(paths, anchor='bottom'):
+def get_app_dir() -> Path:
+    """Cartella dello script (o dell'eseguibile, se compilato con pyinstaller).
+    Usata come default per l'output, al posto della cwd che su Windows puo'
+    risultare in posti inaspettati (es. C:\\WINDOWS\\system32) a seconda di
+    come viene lanciato il programma.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def suggest_base_code(stem: str) -> str:
+    """Estrae un possibile codice base da un nome file, togliendo solo
+    l'ultima coppia lettera+rotazione (2 caratteri) se presente. Volutamente
+    semplice: gestisce bene i casi comuni (CAPAA1 -> CAPA, WPN0A0 -> WPN0);
+    sui frame mirrorati con doppia coppia (es. PISGA1A8) e' un'approssimazione,
+    ma essendo solo un suggerimento per l'autocompletamento (non usato per
+    filtrare la ricerca vera) va bene cosi'.
+    """
+    if len(stem) >= 3 and re.match(r"^[A-Za-z][0-8]$", stem[-2:]):
+        return stem[:-2].upper()
+    return stem.upper()
+
+
+def collect_candidate_codes(folders):
+    """Scansiona una o piu' cartelle e restituisce i codici base candidati,
+    ordinati per frequenza (quanti file condividono quel codice) e poi
+    alfabeticamente. Usato per l'autocompletamento del campo codice.
+    """
+    from collections import Counter
+    seen_stems = set()
+    for folder in folders:
+        if not folder:
+            continue
+        folder = Path(folder)
+        if not folder.exists() or not folder.is_dir():
+            continue
+        try:
+            for f in folder.iterdir():
+                if f.is_file() and f.suffix.lower() in IMG_EXTENSIONS:
+                    seen_stems.add(f.stem)
+        except OSError:
+            continue
+    counter = Counter(suggest_base_code(s) for s in seen_stems)
+    return [c for c, _ in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+TICK_MS = 1000 / 35  # Doom: 35 tic al secondo
+
+
+def load_frames_padded(paths, anchor: str = "bottom"):
+    """Carica le immagini e le porta a un canvas RGBA uniforme (stessa
+    dimensione per tutti i frame). E' un requisito per poter esportare
+    un'animazione valida: GIF/APNG richiedono frame di size coerente,
+    e in-game i viewmodel Doom-style vanno tenuti allineati sul pavimento.
+    """
     imgs = []
     for p in paths:
         try:
             imgs.append(Image.open(p).convert("RGBA"))
         except Exception as e:
-            print(f"Avviso: {p.name} -> {e}")
+            print(f"Avviso: impossibile aprire {p.name}: {e}")
+
     if not imgs:
         return []
+
     max_w = max(i.width for i in imgs)
     max_h = max(i.height for i in imgs)
+
     padded = []
     for img in imgs:
-        canvas = Image.new("RGBA", (max_w, max_h), (0,0,0,0))
-        x = (max_w - img.width)//2
-        if anchor == 'bottom':
-            y = max_h - img.height
-        elif anchor == 'top':
-            y = 0
-        else:  # center
-            y = (max_h - img.height)//2
+        canvas = Image.new("RGBA", (max_w, max_h), (0, 0, 0, 0))
+        x = (max_w - img.width) // 2
+        y = (max_h - img.height) if anchor == "bottom" else (max_h - img.height) // 2
         canvas.paste(img, (x, y), img)
         padded.append(canvas)
+
     return padded
 
-def export_animation(frames, out_path, fmt, durations_ms, loop=True):
+
+def export_animation(frames, out_path: Path, fmt: str, duration_ms: int, loop: bool):
+    """Salva i frame come animazione. fmt: 'GIF' o 'APNG'."""
     if not frames:
-        raise ValueError("Nessun frame")
-    if len(durations_ms) != len(frames):
-        durations_ms = [durations_ms[0]] * len(frames) if durations_ms else [100]*len(frames)
-    loop_count = 0 if loop else 1
+        raise ValueError("Nessun frame da esportare")
+
+    loop_count = 0 if loop else 1  # Pillow: 0 = loop infinito
 
     if fmt == "APNG":
         frames[0].save(
             out_path, save_all=True, append_images=frames[1:],
-            duration=durations_ms, loop=loop_count, disposal=2
+            duration=duration_ms, loop=loop_count, disposal=2,
         )
     elif fmt == "GIF":
+        # GIF non supporta alpha morbido: quantizziamo su palette con un
+        # singolo indice trasparente (trasparenza binaria, come da spec Doom).
         gif_frames = []
         for f in frames:
-            quant = f.convert("RGBA")
-            alpha = quant.split()[-1]
+            quantized = f.convert("RGBA")
+            alpha = quantized.split()[-1]
             mask = alpha.point(lambda a: 255 if a > 127 else 0)
-            rgb = quant.convert("RGB")
+            rgb = quantized.convert("RGB")
             pal = rgb.convert("P", palette=Image.ADAPTIVE, colors=255)
             pal.paste(255, mask=Image.eval(mask, lambda a: 255 - a))
             gif_frames.append(pal)
         gif_frames[0].save(
             out_path, save_all=True, append_images=gif_frames[1:],
-            duration=durations_ms, loop=loop_count, disposal=2,
-            transparency=255
+            duration=duration_ms, loop=loop_count, disposal=2,
+            transparency=255,
         )
     else:
         raise ValueError(f"Formato non supportato: {fmt}")
 
-# ---------------------------------------------------------------------
-# Timeline Model
-# ---------------------------------------------------------------------
 
-class TimelineModel:
-    def __init__(self):
-        self.frames = []
-        self.file_paths = []
-        self.durations_ms = []
-        self._total_duration = 0
-
-    def load(self, paths, anchor='bottom'):
-        imgs = load_and_pad_images(paths, anchor)
-        self.frames = imgs
-        self.file_paths = paths
-        self.durations_ms = [DEFAULT_DURATION_MS] * len(imgs)
-        self._calc_total()
-
-    def _calc_total(self):
-        self._total_duration = sum(self.durations_ms)
-
-    def get_total_ms(self):
-        return self._total_duration
-
-    def get_total_ticks(self):
-        return int(self._total_duration / TICK_MS + 0.5)
-
-    def get_total_seconds(self):
-        return self._total_duration / 1000.0
-
-    def set_duration(self, index, ms):
-        if 0 <= index < len(self.durations_ms):
-            self.durations_ms[index] = max(1, int(ms))
-            self._calc_total()
-
-    def move_frame(self, from_idx, to_idx):
-        if from_idx == to_idx or not self.frames:
-            return
-        self.frames.insert(to_idx, self.frames.pop(from_idx))
-        self.file_paths.insert(to_idx, self.file_paths.pop(from_idx))
-        self.durations_ms.insert(to_idx, self.durations_ms.pop(from_idx))
-        self._calc_total()
-
-    def delete_frame(self, idx):
-        if 0 <= idx < len(self.frames):
-            del self.frames[idx]
-            del self.file_paths[idx]
-            del self.durations_ms[idx]
-            self._calc_total()
-
-    def clear(self):
-        self.frames.clear()
-        self.file_paths.clear()
-        self.durations_ms.clear()
-        self._total_duration = 0
-
-# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # GUI
-# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
-class SpriteStudioApp:
+class SpriteConverterApp:
+
     def __init__(self, root):
         self.root = root
-        self.root.title("Sprite Animation Studio")
-        self.root.geometry("920x720")
-        self.root.minsize(800, 600)
-        self.root.configure(bg='white')
-
-        self.config = self._load_config()
+        self.root.title("Sprite Animation Tester")
+        self.root.configure(bg="white")
+        self.root.geometry("880x680")
+        self.root.minsize(760, 600)
 
         self.mode = tk.StringVar(value="code")
         self.code_var = tk.StringVar()
-        self.folder_var = tk.StringVar(value=str(Path.cwd()))
-        self.manual_files = []
-        self.out_folder_var = tk.StringVar(value=self.config.get('out_folder', str(Path.cwd())))
+        self.folder_var = tk.StringVar()
+        self.folder_filter_var = tk.BooleanVar(value=True)
+        self.manual_files = []  # usata da opzione 3 + drag&drop
+        self.out_folder_var = tk.StringVar(value=str(get_app_dir()))
         self.out_name_var = tk.StringVar(value="sprite_anim")
-        self.format_var = tk.StringVar(value=self.config.get('format', 'APNG'))
+        self.format_var = tk.StringVar(value="APNG")
+        self.speed_var = tk.IntVar(value=120)  # ms per frame (unita' canonica interna)
         self.loop_var = tk.BooleanVar(value=True)
-        self.anchor_var = tk.StringVar(value=self.config.get('anchor', 'bottom'))
 
-        self.timeline = TimelineModel()
-        self.current_frame_idx = 0
+        self.frames = []          # lista di PIL.Image RGBA (padded, uniformi)
+        self.matched_paths = []
         self.is_playing = False
+        self.current_idx = 0
         self._after_id = None
-
-        # Autocomplete
-        self.autocomplete_list = []
-        self.autocomplete_popup = None
-        self.autocomplete_listbox = None
-        self.autocomplete_selected_index = -1
+        self._candidate_codes = []  # per l'autocompletamento del codice
 
         self._build_ui()
-        self._update_autocomplete_list()
 
-    def _load_config(self):
-        if CONFIG_FILE.exists():
-            try:
-                with open(CONFIG_FILE, 'r') as f:
-                    return json.load(f)
-            except:
-                pass
-        return {}
-
-    def _save_config(self):
-        self.config['out_folder'] = self.out_folder_var.get()
-        self.config['format'] = self.format_var.get()
-        self.config['anchor'] = self.anchor_var.get()
-        try:
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(self.config, f, indent=2)
-        except:
-            pass
-
-    # -------------------- UI Build --------------------
+    # ---------------- UI construction ----------------
 
     def _build_ui(self):
-        # Contenitore principale con scrollbar
-        main_canvas = tk.Canvas(self.root, bg='white', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self.root, orient='vertical', command=main_canvas.yview)
-        scrollable_frame = ttk.Frame(main_canvas)
-
-        scrollable_frame.bind(
-            '<Configure>',
-            lambda e: main_canvas.configure(scrollregion=main_canvas.bbox('all'))
-        )
-        def _on_canvas_configure(event):
-            main_canvas.itemconfig(window_id, width=event.width)
-        window_id = main_canvas.create_window((0,0), window=scrollable_frame, anchor='nw')
-        main_canvas.bind('<Configure>', _on_canvas_configure)
-
-        main_canvas.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
-
-        parent = scrollable_frame
-        parent.configure(style='TFrame')
         style = ttk.Style()
-        style.theme_use('clam')
+        style.theme_use("clam")
+        style.configure("TFrame", background="white")
+        style.configure("TLabel", background="white")
+        style.configure("TRadiobutton", background="white")
+        style.configure("TCheckbutton", background="white")
 
-        # ----- 1. Sorgente -----
-        src_frame = ttk.LabelFrame(parent, text="1. Fonte sprite")
-        src_frame.pack(fill='x', padx=10, pady=5)
+        # ---- Finestra scorrevole ----
+        # Tutto il contenuto vive dentro un canvas scrollabile: se la finestra
+        # e' troppo piccola per mostrare tutto (es. schermi piccoli), compare
+        # una scrollbar invece di tagliare via pezzi dell'interfaccia (come
+        # il tasto Esporta che prima poteva finire fuori dalla vista).
+        outer = tk.Canvas(self.root, bg="white", highlightthickness=0)
+        vscroll = ttk.Scrollbar(self.root, orient="vertical", command=outer.yview)
+        outer.configure(yscrollcommand=vscroll.set)
+        outer.pack(side="left", fill="both", expand=True)
+        vscroll.pack(side="right", fill="y")
 
-        rb_code = ttk.Radiobutton(src_frame, text="Codice (cerca in cartella)", variable=self.mode, value="code", command=self._on_mode_change)
-        rb_folder = ttk.Radiobutton(src_frame, text="Cartella (unisci tutti)", variable=self.mode, value="folder", command=self._on_mode_change)
-        rb_manual = ttk.Radiobutton(src_frame, text="Selezione manuale", variable=self.mode, value="manual", command=self._on_mode_change)
+        page = ttk.Frame(outer)
+        page_window = outer.create_window((0, 0), window=page, anchor="nw")
 
-        rb_code.grid(row=0, column=0, sticky='w', padx=5, pady=2)
-        rb_folder.grid(row=1, column=0, sticky='w', padx=5, pady=2)
-        rb_manual.grid(row=2, column=0, sticky='w', padx=5, pady=2)
+        def _sync_scrollregion(event=None):
+            outer.configure(scrollregion=outer.bbox("all"))
 
-        # Code mode
-        self.code_frame = ttk.Frame(src_frame)
-        ttk.Label(self.code_frame, text="Codice:").pack(side='left')
-        self.code_entry = ttk.Entry(self.code_frame, textvariable=self.code_var, width=10)
-        self.code_entry.pack(side='left', padx=5)
-        self.code_entry.bind('<KeyRelease>', self._on_code_change)
-        self.code_entry.bind('<Down>', self._on_arrow_down)
-        self.code_entry.bind('<Up>', self._on_arrow_up)
-        self.code_entry.bind('<Return>', self._on_enter)
-        self.code_entry.bind('<Tab>', self._on_tab)
-        self.code_entry.bind('<Escape>', self._close_autocomplete)
-        self.suggest_btn = ttk.Button(self.code_frame, text="▼", width=3, command=self._show_suggestions)
-        self.suggest_btn.pack(side='left', padx=2)
-        ttk.Button(self.code_frame, text="Scegli cartella...", command=self._pick_code_folder).pack(side='left', padx=5)
-        self.code_folder_lbl = ttk.Label(self.code_frame, text="(nessuna)", foreground='#666')
-        self.code_folder_lbl.pack(side='left', padx=5)
+        def _sync_width(event):
+            outer.itemconfig(page_window, width=event.width)
 
-        # Folder mode
-        self.folder_frame = ttk.Frame(src_frame)
-        ttk.Button(self.folder_frame, text="Scegli cartella...", command=self._pick_merge_folder).pack(side='left')
-        self.folder_lbl = ttk.Label(self.folder_frame, text="(nessuna)", foreground='#666')
-        self.folder_lbl.pack(side='left', padx=5)
-        self.folder_filter_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.folder_frame, text="Filtra per codice", variable=self.folder_filter_var, command=self._on_mode_change).pack(side='left', padx=5)
+        page.bind("<Configure>", _sync_scrollregion)
+        outer.bind("<Configure>", _sync_width)
+
+        def _on_mousewheel(event):
+            delta = event.delta
+            if delta:
+                outer.yview_scroll(int(-delta / 120) or (-1 if delta > 0 else 1), "units")
+            elif event.num == 4:
+                outer.yview_scroll(-1, "units")
+            elif event.num == 5:
+                outer.yview_scroll(1, "units")
+
+        outer.bind_all("<MouseWheel>", _on_mousewheel)
+        outer.bind_all("<Button-4>", _on_mousewheel)
+        outer.bind_all("<Button-5>", _on_mousewheel)
+
+        title = tk.Label(page, text="Anteprima per animazioni", bg="white",
+                          font=("Segoe UI", 16, "bold"))
+        title.pack(pady=(14, 2))
+        subtitle = tk.Label(
+            page,
+            text="| Yagor Studio |",
+            bg="white", fg="#666666", font=("Segoe UI", 9),
+        )
+        subtitle.pack(pady=(0, 10))
+
+        main = ttk.Frame(page)
+        main.pack(fill="both", expand=True, padx=16, pady=6)
+
+        # ---- Sorgente ----
+        source_box = ttk.LabelFrame(main, text="1. Fonte sprite")
+        source_box.pack(fill="x", pady=(0, 8))
+
+        ttk.Radiobutton(source_box, text="Codice sprite (cerca in una cartella)",
+                         variable=self.mode, value="code",
+                         command=self._refresh_mode).grid(row=0, column=0, sticky="w", padx=8, pady=(6, 0))
+        ttk.Radiobutton(source_box, text="Cartella (unisci tutti i file)",
+                         variable=self.mode, value="folder",
+                         command=self._refresh_mode).grid(row=1, column=0, sticky="w", padx=8)
+        ttk.Radiobutton(source_box, text="Selezione manuale immagini",
+                         variable=self.mode, value="manual",
+                         command=self._refresh_mode).grid(row=2, column=0, sticky="w", padx=8)
+
+        # Opzione 1: codice
+        self.code_frame = ttk.Frame(source_box)
+        code_row = ttk.Frame(self.code_frame)
+        code_row.pack(fill="x")
+        ttk.Label(code_row, text="Codice (max 6, alfanumerico):").pack(side="left")
+        code_entry = ttk.Entry(code_row, textvariable=self.code_var, width=8)
+        code_entry.pack(side="left", padx=6)
+        code_entry.bind("<KeyRelease>", self._on_code_typed)
+        ttk.Label(code_row, text="Cerca: CODICE + [A-Z] + [0-8]  es. PISGA1.png",
+                  foreground="#666666").pack(side="left", padx=8)
+        ttk.Button(code_row, text="Scegli cartella...",
+                   command=self._pick_code_folder).pack(side="left", padx=8)
+        self.code_folder_lbl = ttk.Label(code_row, text="(nessuna cartella)", foreground="#666666")
+        self.code_folder_lbl.pack(side="left")
+
+        # Suggerimenti live: mentre scrivi, mostra i codici gia' presenti
+        # nella cartella (script e/o cartella scelta) che iniziano cosi'.
+        sugg_row = ttk.Frame(self.code_frame)
+        sugg_row.pack(fill="x", pady=(4, 0))
+        ttk.Label(sugg_row, text="Suggerimenti:", foreground="#999999").pack(side="left")
+        self.suggestion_listbox = tk.Listbox(sugg_row, height=1, width=50, activestyle="none",
+                                              exportselection=False, bg="#fafafa", relief="flat")
+        self.suggestion_listbox.pack(side="left", padx=6, fill="x", expand=True)
+        self.suggestion_listbox.bind("<<ListboxSelect>>", self._on_suggestion_pick)
+
+        # Opzione 2: cartella
+        self.folder_frame = ttk.Frame(source_box)
+        ttk.Button(self.folder_frame, text="Scegli cartella...",
+                   command=self._pick_merge_folder).pack(side="left")
+        self.folder_lbl = ttk.Label(self.folder_frame, text="(nessuna cartella)", foreground="#666666")
+        self.folder_lbl.pack(side="left", padx=8)
+        ttk.Checkbutton(self.folder_frame, text="Filtra per codice (come opzione 1)",
+                         variable=self.folder_filter_var,
+                         command=self._refresh_mode).pack(side="left", padx=12)
         self.folder_code_entry = ttk.Entry(self.folder_frame, textvariable=self.code_var, width=8)
-        self.folder_code_entry.pack(side='left')
+        self.folder_code_entry.pack(side="left")
 
-        # Manual mode
-        self.manual_frame = ttk.Frame(src_frame)
-        ttk.Button(self.manual_frame, text="Aggiungi immagini...", command=self._add_manual_files).pack(side='left')
-        ttk.Button(self.manual_frame, text="Svuota", command=self._clear_manual).pack(side='left', padx=5)
-        self.manual_count_lbl = ttk.Label(self.manual_frame, text="0 file", foreground='#666')
-        self.manual_count_lbl.pack(side='left', padx=5)
+        # Opzione 3: manuale
+        self.manual_frame = ttk.Frame(source_box)
+        ttk.Button(self.manual_frame, text="Scegli immagini...",
+                   command=self._pick_manual_files).pack(side="left")
+        ttk.Button(self.manual_frame, text="Svuota selezione",
+                   command=self._clear_manual_files).pack(side="left", padx=8)
+        self.manual_count_lbl = ttk.Label(self.manual_frame, text="0 file selezionati",
+                                           foreground="#666666")
+        self.manual_count_lbl.pack(side="left", padx=8)
 
-        self.code_frame.grid(row=0, column=1, sticky='w', padx=5, pady=3)
-        self.folder_frame.grid(row=1, column=1, sticky='w', padx=5, pady=3)
-        self.manual_frame.grid(row=2, column=1, sticky='w', padx=5, pady=3)
-        src_frame.columnconfigure(1, weight=1)
+        for f in (self.code_frame, self.folder_frame, self.manual_frame):
+            f.grid(row=0, column=1, sticky="w", padx=8, pady=6)
+        source_box.columnconfigure(1, weight=1)
 
-        # Drag & drop
-        dnd_text = "Trascina qui immagini" if DND_AVAILABLE else "Drag & drop non disponibile"
-        self.dnd_area = tk.Label(parent, text=dnd_text, bg='#fafafa', relief='ridge', height=2, font=('Segoe UI',9,'italic'))
-        self.dnd_area.pack(fill='x', padx=10, pady=5)
+        # ---- Drag & drop ----
+        dnd_text = ("Trascina qui i file immagine" if DND_AVAILABLE
+                    else "Drag & drop non disponibile (installa tkinterdnd2)")
+        self.dnd_area = tk.Label(
+            main, text=dnd_text, bg="#fafafa", fg="#888888",
+            relief="ridge", bd=1, height=2, font=("Segoe UI", 9, "italic"),
+        )
+        self.dnd_area.pack(fill="x", pady=(0, 8))
         if DND_AVAILABLE:
             self.dnd_area.drop_target_register(DND_FILES)
-            self.dnd_area.dnd_bind('<<Drop>>', self._on_drop)
+            self.dnd_area.dnd_bind("<<Drop>>", self._on_drop)
 
-        # Load button
-        load_frame = ttk.Frame(parent)
-        load_frame.pack(fill='x', padx=10, pady=5)
-        ttk.Button(load_frame, text="Carica frame", command=self.load_frames).pack(side='left')
-        self.status_lbl = ttk.Label(load_frame, text="Nessun frame caricato", foreground='#666')
-        self.status_lbl.pack(side='left', padx=15)
+        # ---- Carica frame ----
+        action_row = ttk.Frame(main)
+        action_row.pack(fill="x", pady=(0, 6))
+        ttk.Button(action_row, text="Carica frame",
+                   command=self.load_frames).pack(side="left")
+        self.status_lbl = ttk.Label(action_row, text="Nessun frame caricato",
+                                     foreground="#666666")
+        self.status_lbl.pack(side="left", padx=12)
 
-        # ----- 2. Timeline -----
-        timeline_frame = ttk.LabelFrame(parent, text="2. Timeline e anteprima")
-        timeline_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        # ---- Anteprima animata ----
+        preview_box = ttk.LabelFrame(main, text="2. Anteprima animata")
+        # fill="x" (non "both"/expand=True): il player prende solo lo spazio
+        # che gli serve, senza "mangiarsi" lo spazio verticale che serve alla
+        # sezione 3 sotto (era la causa del tasto Esporta fuori dalla finestra).
+        preview_box.pack(fill="x", pady=(0, 8))
 
-        self.canvas = tk.Canvas(timeline_frame, bg='#eee', height=160, highlightthickness=0)
-        self.canvas.pack(fill='both', expand=True, padx=5, pady=5)
+        self.canvas = tk.Canvas(preview_box, bg="#eeeeee", highlightthickness=0, height=144)
+        self.canvas.pack(side="top", fill="x", padx=8, pady=(8, 4))
 
-        # Player controls
-        player_controls = ttk.Frame(timeline_frame)
-        player_controls.pack(fill='x', padx=5, pady=5)
+        player_row = ttk.Frame(preview_box)
+        player_row.pack(fill="x", padx=8, pady=(0, 4))
 
-        self.play_btn = ttk.Button(player_controls, text="▶ Play", width=8, command=self._play)
-        self.play_btn.pack(side='left')
-        self.pause_btn = ttk.Button(player_controls, text="⏸ Pausa", width=8, command=self._pause)
-        self.pause_btn.pack(side='left', padx=3)
-        self.stop_btn = ttk.Button(player_controls, text="⏹ Stop", width=8, command=self._stop)
-        self.stop_btn.pack(side='left', padx=3)
-        ttk.Checkbutton(player_controls, text="Loop", variable=self.loop_var).pack(side='left', padx=10)
+        self.play_btn = ttk.Button(player_row, text="\u25B6 Play", command=self._play, width=9)
+        self.play_btn.pack(side="left")
+        self.pause_btn = ttk.Button(player_row, text="\u23F8 Pausa", command=self._pause, width=9)
+        self.pause_btn.pack(side="left", padx=4)
+        self.stop_btn = ttk.Button(player_row, text="\u23F9 Stop", command=self._stop, width=9)
+        self.stop_btn.pack(side="left", padx=4)
+        ttk.Checkbutton(player_row, text="Loop", variable=self.loop_var).pack(side="left", padx=12)
 
-        ttk.Label(player_controls, text="Ancora:").pack(side='left', padx=(15,3))
-        anchor_combo = ttk.Combobox(player_controls, textvariable=self.anchor_var, values=['bottom','center','top'], width=8, state='readonly')
-        anchor_combo.pack(side='left')
-        anchor_combo.bind('<<ComboboxSelected>>', lambda e: self._on_anchor_change())
+        ttk.Label(player_row, text="Velocita' (ms/frame):").pack(side="left", padx=(12, 4))
+        speed_spin = ttk.Spinbox(player_row, from_=20, to=2000, increment=10,
+                                  textvariable=self.speed_var, width=6,
+                                  command=self._update_time_labels)
+        speed_spin.pack(side="left")
+        speed_spin.bind("<KeyRelease>", lambda e: self._update_time_labels())
 
-        ttk.Label(player_controls, text="Vel. base (ms):").pack(side='left', padx=(15,3))
-        self.speed_spin = ttk.Spinbox(player_controls, from_=20, to=2000, increment=10, width=6, textvariable=tk.IntVar(value=DEFAULT_DURATION_MS))
-        self.speed_spin.pack(side='left')
-        self.speed_spin.bind('<KeyRelease>', self._on_speed_change)
+        self.frame_lbl = ttk.Label(player_row, text="Frame: -/-", foreground="#666666")
+        self.frame_lbl.pack(side="right")
 
-        self.time_info_lbl = ttk.Label(player_controls, text="0s 0ms 0tick", foreground='#666')
-        self.time_info_lbl.pack(side='right', padx=10)
+        # Riga tempo: secondi (contatore vivo come quello dei frame) + tick
+        # Doom (35 tic/secondo) + durata totale della sequenza.
+        time_row = ttk.Frame(preview_box)
+        time_row.pack(fill="x", padx=8, pady=(0, 8))
+        self.time_lbl = ttk.Label(time_row, text="Tempo: -/-  ·  Durata totale: -",
+                                   foreground="#666666")
+        self.time_lbl.pack(side="left")
+        self.tick_lbl = ttk.Label(time_row, text="", foreground="#999999")
+        self.tick_lbl.pack(side="right")
 
-        # Timeline thumbnails
-        timeline_toolbar = ttk.Frame(timeline_frame)
-        timeline_toolbar.pack(fill='x', padx=5, pady=3)
-        ttk.Label(timeline_toolbar, text="Frame:").pack(side='left')
-        self.frame_count_lbl = ttk.Label(timeline_toolbar, text="0", foreground='#666')
-        self.frame_count_lbl.pack(side='left', padx=5)
+        # ---- Output ----
+        out_box = ttk.LabelFrame(main, text="3. Esporta animazione")
+        out_box.pack(fill="x")
 
-        thumb_canvas = tk.Canvas(timeline_frame, bg='#f0f0f0', height=70, highlightthickness=0)
-        thumb_canvas.pack(fill='x', padx=5, pady=5)
-        self.thumb_canvas = thumb_canvas
-        self.thumb_refs = []
+        # Le colonne 0-2 (label+campo+sfoglia) occupano circa 3/4 della riga,
+        # il tasto Esporta sta di lato nella colonna 3, ancorato in alto cosi'
+        # resta sempre visibile in cima alla sezione invece che in fondo.
+        ttk.Label(out_box, text="Cartella destinazione:").grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        ttk.Entry(out_box, textvariable=self.out_folder_var, width=32).grid(row=0, column=1, sticky="we", padx=4)
+        ttk.Button(out_box, text="Sfoglia...", command=self._pick_output_folder).grid(row=0, column=2, padx=(4, 12))
 
-        # ----- 3. Esportazione -----
-        export_frame = ttk.LabelFrame(parent, text="3. Esporta animazione")
-        export_frame.pack(fill='x', padx=10, pady=5)
+        ttk.Label(out_box, text="Nome file:").grid(row=1, column=0, sticky="w", padx=8, pady=6)
+        ttk.Entry(out_box, textvariable=self.out_name_var, width=20).grid(row=1, column=1, sticky="w", padx=4)
 
-        row1 = ttk.Frame(export_frame)
-        row1.pack(fill='x', padx=5, pady=5)
+        format_row = ttk.Frame(out_box)
+        format_row.grid(row=1, column=2, sticky="w", padx=(4, 12))
+        ttk.Radiobutton(format_row, text="APNG (alpha completo)",
+                         variable=self.format_var, value="APNG").pack(anchor="w")
+        ttk.Radiobutton(format_row, text="GIF (compatibilita')",
+                         variable=self.format_var, value="GIF").pack(anchor="w")
 
-        ttk.Label(row1, text="Cartella:").pack(side='left')
-        out_entry = ttk.Entry(row1, textvariable=self.out_folder_var, width=30)
-        out_entry.pack(side='left', padx=3, fill='x', expand=True)
-        ttk.Button(row1, text="Sfoglia...", command=self._pick_output_folder).pack(side='left', padx=3)
+        export_btn = ttk.Button(out_box, text="Esporta\nanimazione",
+                                 command=self.export_animation_file)
+        export_btn.grid(row=0, column=3, rowspan=2, sticky="ns", padx=8, pady=6)
 
-        ttk.Label(row1, text="Nome:").pack(side='left', padx=(10,3))
-        name_entry = ttk.Entry(row1, textvariable=self.out_name_var, width=15)
-        name_entry.pack(side='left', padx=3)
+        out_box.columnconfigure(1, weight=1)
 
-        self.export_btn = ttk.Button(row1, text="▶ Esporta", command=self.export_animation)
-        self.export_btn.pack(side='right', padx=5)
+        self._refresh_mode()
+        self._refresh_candidates()
+        self._update_time_labels()
 
-        row2 = ttk.Frame(export_frame)
-        row2.pack(fill='x', padx=5, pady=5)
-        ttk.Radiobutton(row2, text="APNG (alpha completo)", variable=self.format_var, value="APNG").pack(side='left', padx=5)
-        ttk.Radiobutton(row2, text="GIF (compatibilità)", variable=self.format_var, value="GIF").pack(side='left', padx=5)
+    # ---------------- Mode switching ----------------
 
-        self._on_mode_change()
-
-    # -------------------- Mode switching --------------------
-
-    def _on_mode_change(self):
-        self.code_frame.grid_remove()
-        self.folder_frame.grid_remove()
-        self.manual_frame.grid_remove()
+    def _refresh_mode(self):
+        for f in (self.code_frame, self.folder_frame, self.manual_frame):
+            f.grid_remove()
         m = self.mode.get()
-        if m == 'code':
+        if m == "code":
             self.code_frame.grid()
-        elif m == 'folder':
+        elif m == "folder":
             self.folder_frame.grid()
-            self.folder_code_entry.configure(state='normal' if self.folder_filter_var.get() else 'disabled')
-        else:
+            self.folder_code_entry.configure(
+                state="normal" if self.folder_filter_var.get() else "disabled")
+        elif m == "manual":
             self.manual_frame.grid()
-        self._update_autocomplete_list()
 
-    def _on_anchor_change(self):
-        if self.timeline.frames:
-            self.load_frames()
+    def _enforce_code_limit(self, event=None):
+        v = self.code_var.get()
+        v = re.sub(r"[^A-Za-z0-9]", "", v)[:6]
+        self.code_var.set(v)
 
-    # -------------------- Autocomplete interattivo --------------------
+    # ---------------- Autocompletamento codice ----------------
 
-    def _update_autocomplete_list(self):
-        folder = self.folder_var.get().strip()
-        if not folder:
-            self.autocomplete_list = []
+    def _refresh_candidates(self):
+        """Rilegge i codici candidati da: cartella dello script + cartella
+        eventualmente selezionata. Chiamata all'avvio e ogni volta che si
+        sceglie una cartella diversa."""
+        folders = [get_app_dir()]
+        if self.folder_var.get():
+            folders.append(self.folder_var.get())
+        self._candidate_codes = collect_candidate_codes(folders)
+        self._update_code_suggestions()
+
+    def _on_code_typed(self, event=None):
+        self._enforce_code_limit()
+        self._update_code_suggestions()
+
+    def _update_code_suggestions(self):
+        prefix = self.code_var.get().strip().upper()
+        if prefix:
+            matches = [c for c in self._candidate_codes if c.startswith(prefix) and c != prefix]
+        else:
+            matches = self._candidate_codes
+        matches = matches[:8]
+        self.suggestion_listbox.delete(0, "end")
+        for c in matches:
+            self.suggestion_listbox.insert("end", c)
+        self.suggestion_listbox.configure(height=max(1, min(len(matches), 4)))
+
+    def _on_suggestion_pick(self, event=None):
+        sel = self.suggestion_listbox.curselection()
+        if not sel:
             return
-        try:
-            paths = list(Path(folder).iterdir())
-            prefixes = set()
-            for p in paths:
-                if p.is_file() and p.suffix.lower() in IMG_EXTENSIONS:
-                    name = p.stem
-                    if len(name) >= 4:
-                        prefixes.add(name[:4])
-            self.autocomplete_list = sorted(prefixes)
-        except:
-            self.autocomplete_list = []
+        code = self.suggestion_listbox.get(sel[0])
+        self.code_var.set(code)
+        self._update_code_suggestions()
 
-    def _on_code_change(self, event=None):
-        # Aggiorna i suggerimenti
-        self._show_suggestions()
-
-    def _show_suggestions(self):
-        """Crea o aggiorna il popup dei suggerimenti."""
-        prefix = self.code_var.get().upper()
-        matches = [p for p in self.autocomplete_list if p.startswith(prefix)] if prefix else []
-
-        # Chiudi il popup se non ci sono corrispondenze
-        if not matches:
-            self._close_autocomplete()
-            return
-
-        # Se il popup esiste già, aggiorna la lista
-        if self.autocomplete_popup and self.autocomplete_popup.winfo_exists():
-            self.autocomplete_listbox.delete(0, tk.END)
-            for m in matches:
-                self.autocomplete_listbox.insert(tk.END, m)
-            self.autocomplete_selected_index = -1
-            # Riposiziona sotto la entry
-            self._position_popup()
-            return
-
-        # Crea nuovo popup
-        popup = tk.Toplevel(self.root)
-        popup.wm_overrideredirect(True)
-        popup.configure(bg='white', relief='solid', bd=1)
-        popup.takefocus = False  # non ruba il focus
-
-        listbox = tk.Listbox(popup, height=min(6, len(matches)), font=('Segoe UI', 10), selectmode='single', takefocus=False)
-        listbox.pack(fill='both', expand=True)
-        for m in matches:
-            listbox.insert(tk.END, m)
-
-        self.autocomplete_popup = popup
-        self.autocomplete_listbox = listbox
-        self.autocomplete_selected_index = -1
-
-        # Posiziona il popup
-        self._position_popup()
-
-        # Binding per selezione con mouse
-        listbox.bind('<Double-Button-1>', lambda e: self._select_autocomplete())
-        listbox.bind('<Button-1>', self._on_listbox_click)
-
-    def _position_popup(self):
-        if not self.autocomplete_popup or not self.autocomplete_popup.winfo_exists():
-            return
-        x = self.code_entry.winfo_rootx()
-        y = self.code_entry.winfo_rooty() + self.code_entry.winfo_height()
-        self.autocomplete_popup.geometry(f"+{x}+{y}")
-
-    def _on_arrow_down(self, event):
-        if self.autocomplete_popup and self.autocomplete_popup.winfo_exists():
-            # Seleziona il prossimo elemento
-            size = self.autocomplete_listbox.size()
-            if size > 0:
-                idx = self.autocomplete_selected_index + 1
-                if idx >= size:
-                    idx = 0
-                self.autocomplete_listbox.selection_clear(0, tk.END)
-                self.autocomplete_listbox.selection_set(idx)
-                self.autocomplete_listbox.see(idx)
-                self.autocomplete_selected_index = idx
-            return "break"
-
-    def _on_arrow_up(self, event):
-        if self.autocomplete_popup and self.autocomplete_popup.winfo_exists():
-            size = self.autocomplete_listbox.size()
-            if size > 0:
-                idx = self.autocomplete_selected_index - 1
-                if idx < 0:
-                    idx = size - 1
-                self.autocomplete_listbox.selection_clear(0, tk.END)
-                self.autocomplete_listbox.selection_set(idx)
-                self.autocomplete_listbox.see(idx)
-                self.autocomplete_selected_index = idx
-            return "break"
-
-    def _on_enter(self, event):
-        # Se c'è un popup e un elemento selezionato, seleziona e chiudi
-        if self.autocomplete_popup and self.autocomplete_popup.winfo_exists():
-            if self.autocomplete_selected_index >= 0:
-                self._select_autocomplete()
-                # Dopo selezione, il popup si chiude; il focus rimane sulla entry
-                # e possiamo premere di nuovo Invio per caricare
-                return "break"
-        # Se non c'è popup o nessuna selezione, manda il focus al pulsante Carica?
-        # Invece di spostare il focus, lasciamo che l'utente prema Invio per attivare il caricamento
-        # Quindi qui possiamo invocare load_frames() direttamente
-        self.load_frames()
-        return "break"
-
-    def _on_tab(self, event):
-        # Se c'è popup, seleziona l'elemento corrente (o il primo) e chiudi
-        if self.autocomplete_popup and self.autocomplete_popup.winfo_exists():
-            if self.autocomplete_selected_index < 0:
-                # seleziona il primo
-                self.autocomplete_selected_index = 0
-                self.autocomplete_listbox.selection_clear(0, tk.END)
-                self.autocomplete_listbox.selection_set(0)
-            self._select_autocomplete()
-            return "break"
-
-    def _on_listbox_click(self, event):
-        # Click su un elemento del listbox lo seleziona e chiude il popup
-        idx = self.autocomplete_listbox.nearest(event.y)
-        if idx >= 0:
-            self.autocomplete_listbox.selection_clear(0, tk.END)
-            self.autocomplete_listbox.selection_set(idx)
-            self.autocomplete_selected_index = idx
-            self._select_autocomplete()
-
-    def _select_autocomplete(self):
-        if self.autocomplete_popup and self.autocomplete_popup.winfo_exists():
-            idx = self.autocomplete_selected_index
-            if idx >= 0:
-                value = self.autocomplete_listbox.get(idx)
-                self.code_var.set(value)
-                self._close_autocomplete()
-
-    def _close_autocomplete(self, event=None):
-        if self.autocomplete_popup and self.autocomplete_popup.winfo_exists():
-            self.autocomplete_popup.destroy()
-        self.autocomplete_popup = None
-        self.autocomplete_listbox = None
-        self.autocomplete_selected_index = -1
-
-    # -------------------- File pickers --------------------
+    # ---------------- Source pickers ----------------
 
     def _pick_code_folder(self):
-        d = filedialog.askdirectory(title="Seleziona cartella sprite")
+        d = filedialog.askdirectory(title="Cartella dove cercare gli sprite",
+                                     initialdir=str(get_app_dir()))
         if d:
             self.folder_var.set(d)
             self.code_folder_lbl.config(text=Path(d).name)
-            self._update_autocomplete_list()
+            self._refresh_candidates()
 
     def _pick_merge_folder(self):
-        d = filedialog.askdirectory(title="Seleziona cartella")
+        d = filedialog.askdirectory(title="Cartella da unire",
+                                     initialdir=str(get_app_dir()))
         if d:
             self.folder_var.set(d)
             self.folder_lbl.config(text=Path(d).name)
-            self._update_autocomplete_list()
+            self._refresh_candidates()
 
-    def _add_manual_files(self):
-        files = filedialog.askopenfilenames(title="Seleziona immagini", filetypes=[("Immagini","*.png *.jpg *.jpeg")])
+    def _pick_manual_files(self):
+        files = filedialog.askopenfilenames(
+            title="Seleziona immagini",
+            filetypes=[("Immagini", "*.png *.jpg *.jpeg")],
+        )
         if files:
             self.manual_files.extend(Path(f) for f in files)
-            self.manual_count_lbl.config(text=f"{len(self.manual_files)} file")
-            if self.mode.get() == 'manual':
-                self.load_frames()
+            self._update_manual_count()
 
-    def _clear_manual(self):
-        self.manual_files.clear()
-        self.manual_count_lbl.config(text="0 file")
+    def _clear_manual_files(self):
+        self.manual_files = []
+        self._update_manual_count()
 
-    def _pick_output_folder(self):
-        d = filedialog.askdirectory(title="Cartella destinazione")
-        if d:
-            self.out_folder_var.set(d)
-            self._save_config()
+    def _update_manual_count(self):
+        self.manual_count_lbl.config(text=f"{len(self.manual_files)} file selezionati")
 
     def _on_drop(self, event):
         raw = event.data
-        paths = self.root.tk.splitlist(raw) if hasattr(self.root, 'tk') else raw.split()
+        paths = self.root.tk.splitlist(raw)
         added = 0
         for p in paths:
             path = Path(p)
@@ -605,167 +561,81 @@ class SpriteStudioApp:
                 self.manual_files.append(path)
                 added += 1
         if added:
-            self.mode.set('manual')
-            self._on_mode_change()
-            self.manual_count_lbl.config(text=f"{len(self.manual_files)} file")
-            self.load_frames()
+            self.mode.set("manual")
+            self._refresh_mode()
+            self._update_manual_count()
+            self.status_lbl.config(text=f"{added} immagini aggiunte via drag & drop")
 
-    # -------------------- Caricamento frame --------------------
+    def _pick_output_folder(self):
+        d = filedialog.askdirectory(title="Cartella di destinazione",
+                                     initialdir=self.out_folder_var.get() or str(get_app_dir()))
+        if d:
+            self.out_folder_var.set(d)
+
+    # ---------------- Core actions ----------------
 
     def _gather_paths(self):
         m = self.mode.get()
         code = self.code_var.get().strip()
-        if m == 'code':
+
+        if m == "code":
             if not self.folder_var.get():
-                messagebox.showwarning("Attenzione", "Scegli una cartella.")
+                messagebox.showwarning("Attenzione", "Scegli prima una cartella.")
                 return []
             if not is_valid_code(code):
-                messagebox.showwarning("Attenzione", "Codice non valido (1-6 alfanumerici).")
+                messagebox.showwarning("Attenzione", "Inserisci un codice alfanumerico (1-6 caratteri).")
                 return []
-            pattern = build_pattern(code)
-            folder = Path(self.folder_var.get())
-            files = [f for f in folder.iterdir() if f.is_file() and pattern.match(f.name)]
-            return sort_sprite_files(files, code)
-        elif m == 'folder':
+            return find_matching_files(Path(self.folder_var.get()), code)
+
+        if m == "folder":
             if not self.folder_var.get():
-                messagebox.showwarning("Attenzione", "Scegli una cartella.")
+                messagebox.showwarning("Attenzione", "Scegli prima una cartella.")
                 return []
-            folder = Path(self.folder_var.get())
             if self.folder_filter_var.get():
                 if not is_valid_code(code):
-                    messagebox.showwarning("Attenzione", "Codice non valido per filtro.")
+                    messagebox.showwarning("Attenzione", "Inserisci un codice valido per il filtro.")
                     return []
-                pattern = build_pattern(code)
-                files = [f for f in folder.iterdir() if f.is_file() and pattern.match(f.name)]
-                return sort_sprite_files(files, code)
-            else:
-                files = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in IMG_EXTENSIONS]
-                return sort_sprite_files(files, '')
-        else:  # manual
+                return find_matching_files(Path(self.folder_var.get()), code)
+            return find_all_images(Path(self.folder_var.get()))
+
+        if m == "manual":
             if not self.manual_files:
                 messagebox.showwarning("Attenzione", "Nessuna immagine selezionata.")
                 return []
-            if code:
-                pattern = build_pattern(code)
-                files = [f for f in self.manual_files if pattern.match(f.name)]
-            else:
-                files = self.manual_files
-            return sort_sprite_files(files, code)
+            return sort_sprite_files(self.manual_files, code) if code else self.manual_files
+
+        return []
 
     def load_frames(self):
         self._stop()
         paths = self._gather_paths()
+        self.matched_paths = paths
         if not paths:
             self.status_lbl.config(text="Nessun file trovato")
-            self.timeline.clear()
-            self._update_display()
+            self.frames = []
+            self.canvas.delete("all")
+            self.frame_lbl.config(text="Frame: -/-")
+            self._update_time_labels()
             return
 
-        anchor = self.anchor_var.get()
-        self.timeline.load(paths, anchor)
-        if not self.timeline.frames:
-            self.status_lbl.config(text="Errore nel caricamento")
+        self.frames = load_frames_padded(paths)
+        if not self.frames:
+            self.status_lbl.config(text="Errore nel caricamento dei frame")
             return
 
-        self.current_frame_idx = 0
-        self._update_display()
-        self.status_lbl.config(text=f"{len(self.timeline.frames)} frame caricati")
-        self._draw_thumbnails()
-
-    # -------------------- Display --------------------
-
-    def _update_display(self):
-        if not self.timeline.frames:
-            self.canvas.delete('all')
-            self.frame_count_lbl.config(text="0")
-            self.time_info_lbl.config(text="0s 0ms 0tick")
-            return
-        self._show_frame(self.current_frame_idx)
-        self.frame_count_lbl.config(text=f"{len(self.timeline.frames)}")
-        total_ms = self.timeline.get_total_ms()
-        total_s = total_ms / 1000.0
-        total_ticks = self.timeline.get_total_ticks()
-        self.time_info_lbl.config(text=f"{total_s:.2f}s  {total_ms}ms  {total_ticks}tick")
-        self._draw_thumbnails()
-
-    def _show_frame(self, idx):
-        if idx < 0 or idx >= len(self.timeline.frames):
-            return
-        frame = self.timeline.frames[idx]
-        w = self.canvas.winfo_width()
-        h = self.canvas.winfo_height()
-        if w < 10:
-            w = 300
-        if h < 10:
-            h = 160
-        scale = min((w - 20)/frame.width, (h - 20)/frame.height, 4.0)
-        scale = max(scale, 0.05)
-        disp_w = int(frame.width * scale)
-        disp_h = int(frame.height * scale)
-        disp_img = frame.resize((disp_w, disp_h), Image.NEAREST)
-        checker = self._make_checker(disp_w, disp_h)
-        checker.paste(disp_img, (0,0), disp_img)
-        self._tk_img = ImageTk.PhotoImage(checker)
-        self.canvas.delete('all')
-        cx, cy = w//2, h//2
-        self.canvas.create_image(cx, cy, anchor='center', image=self._tk_img)
-
-    @staticmethod
-    def _make_checker(w,h,cell=8):
-        base = Image.new("RGBA", (w,h), (255,255,255,255))
-        c1 = (210,210,210,255); c2=(240,240,240,255)
-        for y in range(0,h,cell):
-            for x in range(0,w,cell):
-                col = c1 if ((x//cell)+(y//cell))%2==0 else c2
-                for yy in range(y,min(y+cell,h)):
-                    for xx in range(x,min(x+cell,w)):
-                        base.putpixel((xx,yy), col)
-        return base
-
-    def _draw_thumbnails(self):
-        self.thumb_canvas.delete('all')
-        self.thumb_refs.clear()
-        if not self.timeline.frames:
-            return
-        thumb_w = 50
-        thumb_h = 50
-        spacing = 6
-        total_w = len(self.timeline.frames) * (thumb_w + spacing)
-        self.thumb_canvas.config(scrollregion=(0,0,total_w,thumb_h+20))
-
-        for i, img in enumerate(self.timeline.frames):
-            thumb = img.copy()
-            thumb.thumbnail((thumb_w, thumb_h), Image.NEAREST)
-            tk_thumb = ImageTk.PhotoImage(thumb)
-            self.thumb_refs.append(tk_thumb)
-            x = i * (thumb_w + spacing)
-            y = 5
-            self.thumb_canvas.create_rectangle(x, y, x+thumb_w, y+thumb_h, outline='#aaa', fill='', width=1)
-            self.thumb_canvas.create_image(x, y, anchor='nw', image=tk_thumb)
-            dur = self.timeline.durations_ms[i] if i < len(self.timeline.durations_ms) else 0
-            rect_id = self.thumb_canvas.create_rectangle(x, y, x+thumb_w, y+thumb_h, outline='', fill='', tags=(f'thumb_{i}',))
-            self.thumb_canvas.tag_bind(f'thumb_{i}', '<Button-1>', lambda e, idx=i: self._on_thumb_click(idx))
-            self.thumb_canvas.create_text(x+thumb_w//2, y+thumb_h+2, text=f"{dur}ms", font=('Segoe UI',7), anchor='n')
-
-    def _on_thumb_click(self, idx):
-        current_dur = self.timeline.durations_ms[idx] if idx < len(self.timeline.durations_ms) else DEFAULT_DURATION_MS
-        new_dur = simpledialog.askinteger(
-            "Durata frame",
-            f"Inserisci durata in ms per il frame {idx+1}:",
-            initialvalue=current_dur,
-            minvalue=1,
-            maxvalue=10000
+        self.current_idx = 0
+        w, h = self.frames[0].size
+        self.status_lbl.config(
+            text=f"{len(self.frames)} frame caricati · {w}x{h}px  "
+                 f"({', '.join(p.name for p in paths[:6])}{'...' if len(paths) > 6 else ''})"
         )
-        if new_dur is not None:
-            self.timeline.set_duration(idx, new_dur)
-            self._update_display()
-            self._draw_thumbnails()
+        self._show_frame(0)
 
-    # -------------------- Player --------------------
+    # ---------------- Player ----------------
 
     def _play(self):
-        if not self.timeline.frames:
-            messagebox.showinfo("Attenzione", "Carica dei frame prima.")
+        if not self.frames:
+            messagebox.showwarning("Attenzione", "Carica prima dei frame.")
             return
         if self.is_playing:
             return
@@ -774,79 +644,124 @@ class SpriteStudioApp:
 
     def _pause(self):
         self.is_playing = False
-        if self._after_id:
+        if self._after_id is not None:
             self.root.after_cancel(self._after_id)
             self._after_id = None
 
     def _stop(self):
         self._pause()
-        self.current_frame_idx = 0
-        self._show_frame(0)
+        self.current_idx = 0
+        if self.frames:
+            self._show_frame(0)
+        else:
+            self._update_time_labels()
 
     def _tick(self):
-        if not self.is_playing or not self.timeline.frames:
+        if not self.is_playing or not self.frames:
             return
-        self._show_frame(self.current_frame_idx)
-        next_idx = self.current_frame_idx + 1
-        if next_idx >= len(self.timeline.frames):
+        self._show_frame(self.current_idx)
+        next_idx = self.current_idx + 1
+        if next_idx >= len(self.frames):
             if self.loop_var.get():
                 next_idx = 0
             else:
                 self.is_playing = False
                 return
-        self.current_frame_idx = next_idx
-        dur = self.timeline.durations_ms[self.current_frame_idx] if self.current_frame_idx < len(self.timeline.durations_ms) else DEFAULT_DURATION_MS
-        self._after_id = self.root.after(dur, self._tick)
+        self.current_idx = next_idx
+        delay = max(20, int(self.speed_var.get()))
+        self._after_id = self.root.after(delay, self._tick)
 
-    def _on_speed_change(self, event=None):
-        try:
-            new_speed = int(self.speed_spin.get())
-        except:
-            return
-        if self.timeline.frames:
-            for i in range(len(self.timeline.durations_ms)):
-                self.timeline.durations_ms[i] = max(1, new_speed)
-            self.timeline._calc_total()
-            self._update_display()
+    def _show_frame(self, idx):
+        frame = self.frames[idx]
+        canvas_w = max(self.canvas.winfo_width(), 200)
+        canvas_h = max(self.canvas.winfo_height(), 200)
+        scale = min((canvas_w - 20) / frame.width, (canvas_h - 20) / frame.height, 4.0)
+        scale = max(scale, 0.05)
+        disp_w = max(1, int(frame.width * scale))
+        disp_h = max(1, int(frame.height * scale))
+        disp_img = frame.resize((disp_w, disp_h), Image.NEAREST)
 
-    # -------------------- Export --------------------
+        checker = self._make_checker(disp_w, disp_h)
+        checker.paste(disp_img, (0, 0), disp_img)
 
-    def export_animation(self):
-        if not self.timeline.frames:
-            messagebox.showwarning("Attenzione", "Carica prima dei frame.")
-            return
+        self._tk_preview_img = ImageTk.PhotoImage(checker)
+        self.canvas.delete("all")
+        cx, cy = canvas_w // 2, canvas_h // 2
+        self.canvas.create_image(cx, cy, anchor="center", image=self._tk_preview_img)
+        self.frame_lbl.config(text=f"Frame: {idx + 1}/{len(self.frames)}")
+        self._update_time_labels(current_idx=idx)
+
+    def _update_time_labels(self, current_idx=None):
+        """Aggiorna i contatori di tempo: secondi trascorsi/totali e tick
+        Doom equivalenti (35 tic/secondo), oltre alla durata totale della
+        sequenza alla velocita' attualmente impostata."""
+        ms_per_frame = max(20, int(self.speed_var.get() or 20))
+        n = len(self.frames)
+        total_ms = ms_per_frame * n
+        total_s = total_ms / 1000
+
+        if n and current_idx is not None:
+            elapsed_s = (ms_per_frame * current_idx) / 1000
+            time_txt = f"Tempo: {elapsed_s:.2f}s / {total_s:.2f}s  ·  Durata totale: {total_s:.2f}s"
+        else:
+            time_txt = f"Tempo: -/-  ·  Durata totale: {total_s:.2f}s" if n else "Tempo: -/-  ·  Durata totale: -"
+
+        self.time_lbl.config(text=time_txt)
+
+        tick_per_frame = ms_per_frame / TICK_MS
+        self.tick_lbl.config(
+            text=f"\u2248 {tick_per_frame:.1f} tick/frame  ·  {total_ms/TICK_MS:.1f} tick totali"
+            if n else ""
+        )
+
+    @staticmethod
+    def _make_checker(w, h, cell=8):
+        base = Image.new("RGBA", (w, h), (255, 255, 255, 255))
+        c1, c2 = (210, 210, 210, 255), (240, 240, 240, 255)
+        for y in range(0, h, cell):
+            for x in range(0, w, cell):
+                color = c1 if ((x // cell) + (y // cell)) % 2 == 0 else c2
+                for yy in range(y, min(y + cell, h)):
+                    for xx in range(x, min(x + cell, w)):
+                        base.putpixel((xx, yy), color)
+        return base
+
+    # ---------------- Export ----------------
+
+    def export_animation_file(self):
+        if not self.frames:
+            self.load_frames()
+            if not self.frames:
+                messagebox.showwarning("Attenzione", "Carica prima dei frame.")
+                return
+
         out_folder = Path(self.out_folder_var.get())
-        if not out_folder.exists():
-            messagebox.showerror("Errore", "Cartella destinazione non valida.")
-            return
         name = self.out_name_var.get().strip() or "sprite_anim"
+        if not out_folder.exists():
+            messagebox.showerror("Errore", "Cartella di destinazione non valida.")
+            return
+
         fmt = self.format_var.get()
         ext = ".png" if fmt == "APNG" else ".gif"
         out_path = out_folder / f"{name}{ext}"
 
         try:
-            export_animation(
-                self.timeline.frames,
-                out_path,
-                fmt,
-                self.timeline.durations_ms,
-                loop=self.loop_var.get()
-            )
+            export_animation(self.frames, out_path, fmt,
+                              duration_ms=max(20, int(self.speed_var.get())),
+                              loop=self.loop_var.get())
         except Exception as e:
-            messagebox.showerror("Errore", f"Esportazione fallita: {e}")
+            messagebox.showerror("Errore", f"Impossibile salvare: {e}")
             return
+
         messagebox.showinfo("Fatto", f"Animazione salvata in:\n{out_path}")
         self.status_lbl.config(text=f"Esportato: {out_path.name}")
-        self._save_config()
 
-# ---------------------------------------------------------------------
-# Avvio
-# ---------------------------------------------------------------------
 
 def main():
     root = TkinterDnD.Tk() if DND_AVAILABLE else tk.Tk()
-    app = SpriteStudioApp(root)
+    app = SpriteConverterApp(root)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
