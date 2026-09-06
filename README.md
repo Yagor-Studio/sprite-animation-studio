@@ -10,7 +10,7 @@ Scarica l'ultima versione eseguibile dalla [pagina delle Release](https://github
 
 ### Per sviluppatori (codice sorgente)
 ```bash
-git clone https://github.com/TUO_USERNAME/sprite-animation-studio.git
+git clone https://github.com/Yagor-Studio/sprite-animation-studio.git
 cd sprite-animation-studio
 pip install -r requirements.txt
 python -m sprite_studio.main
