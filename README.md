@@ -1,6 +1,6 @@
 ## 📥 Download
 
-Scarica l'ultima versione eseguibile dalla [pagina delle Release](https://github.com/TUO_USERNAME/sprite-animation-studio/releases).
+Scarica l'ultima versione eseguibile dalla [pagina delle Release](https://github.com/Yagor-Studio/sprite-animation-studio).
 
 ## 🚀 Avvio rapido
 
