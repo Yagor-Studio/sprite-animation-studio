@@ -2,11 +2,11 @@
 
 
 a = Analysis(
-    ['launcher.py'],
-    pathex=['.'],
+    ['run.py'],
+    pathex=[],
     binaries=[],
-    datas=[('resources', 'resources')],
-    hiddenimports=['PIL', 'PIL.Image', 'PIL.ImageTk', 'tkinter', 'tkinter.ttk', 'tkinter.filedialog', 'tkinter.messagebox'],
+    datas=[('sprite_animation_studio/resources', 'resources')],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='SpriteStudio',
+    name='SpriteAnimationStudio',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
