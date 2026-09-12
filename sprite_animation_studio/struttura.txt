@@ -1,0 +1,36 @@
+sprite_studio/
+├── __init__.py
+├── main.py
+├── constants.py
+├── models.py
+├── project_manager.py
+├── timeline.py
+├── sprite_utils.py
+├── ui_welcome.py
+├── ui_profile.py
+└── ui_main.py
+
+main_pane (PanedWindow, orizzontale)
+├── left_frame (weight=0, larghezza 280)
+│   ├── resources_frame (LabelFrame "Risorse")
+│   │   ├── path_row (Label + Button 📁)
+│   │   ├── resources_listbox
+│   │   └── btn_create_lib (pulsante "📚 Crea libreria da cartella")
+│   └── libs_frame (LabelFrame "Librerie")
+│       ├── tree
+│       └── btn_frame (Nuovo Profilo, Nuova Animazione, Elimina)
+├── center_frame (weight=1)
+│   ├── viewer_frame
+│   │   ├── canvas_container (canvas)
+│   │   ├── angle_frame (◀  label  ▶)
+│   │   └── info_frame (info_lbl)
+│   └── timeline_frame (LabelFrame "Timeline")
+│       ├── thumb_container (thumb_canvas)
+│       └── player_frame (Play, Pausa, Stop, Loop, Velocità, time_lbl)
+└── right_frame (weight=0, larghezza 380)
+    └── sheet_frame (LabelFrame "Spritesheet")
+        ├── sheet_listbox
+        ├── sheet_canvas
+        └── grid_frame
+            ├── row1 (spinbox Righe e Colonne)
+            └── row2 (pulsanti: Applica griglia, Salva frame, Esporta frame)
