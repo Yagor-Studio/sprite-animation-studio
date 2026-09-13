@@ -23,7 +23,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build executable
-        run: pyinstaller SpriteAnimationStudio.spec --noupx
+        run: pyinstaller SpriteAnimationStudio.spec
 
       - name: Setup butler
         uses: remarkablegames/setup-butler@v3
