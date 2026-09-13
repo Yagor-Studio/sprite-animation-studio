@@ -21,7 +21,7 @@ python -m sprite_animation_studio.main
 #####
 #####
 ##### Potresti anche supportarmi
-#### itch.io # https://yagor-studio.itch.io/ <-[ in lavorazione ]
+#### itch.io # https://yagor-studio.itch.io/sprite-animation-studio
 #### Ko-fi # https://ko-fi.com/yagorstudio
 ### E ricorda che la risorsa "welcome_bg" proviene da una collezione prodotta da ROGA, pastelli morbidi su carta.
 ##
