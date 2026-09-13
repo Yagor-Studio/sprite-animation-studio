@@ -25,10 +25,13 @@ jobs:
       - name: Build executable
         run: pyinstaller SpriteAnimationStudio.spec
 
+      - name: Setup butler
+        uses: remarkablegames/setup-butler@v3
+
       - name: Publish to itch.io
-        uses: yeslayla/butler-publish-itchio-action@master
+        run: butler push dist yagor-studio/sprite-animation-studio:windows
         env:
-          BUTLER_CREDENTIALS: ${{ secrets.BUTLER_CREDENTIALS }}
+          BUTLER_API_KEY: ${{ secrets.BUTLER_CREDENTIALS }}
           CHANNEL: windows
           ITCH_GAME: sprite-animation-studio
           ITCH_USER: yagor-studio
