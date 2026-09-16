@@ -1,26 +1,21 @@
-# Eseguibili
-dist/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller
 build/
-*.exe
+dist/
 *.spec
 
-# Cache Python
-__pycache__/
-*.pyc
-*.pyo
-
-# File di progetto
-*.sas
-recent.json
-
-# Ambienti virtuali
-venv/
-env/
-
-# IDE
-.vscode/
-.idea/
-
-# File di sistema
-Thumbs.db
+# OS
 .DS_Store
+Thumbs.db
+
+# Config locale
+.sprite_studio/
+
+# Progetti SAS (non versionare progetti utente)
+*.sas

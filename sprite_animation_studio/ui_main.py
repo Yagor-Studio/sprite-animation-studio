@@ -6,6 +6,7 @@ from PIL import Image, ImageTk
 import math
 import time
 
+from .history import ProjectHistory
 from .constants import APP_NAME, APP_VERSION, DEFAULT_DURATION_MS, PROJECT_EXTENSION, IMG_EXTENSIONS
 from .models import AnimationData, FrameGroup, AngleData, ProfileData
 from .timeline import TimelineModel
@@ -104,6 +105,11 @@ class MainWindow:
         self.tree_item_map = {}
         self._closed = False
 
+        self._bridge = None
+        self._loaded_anim_ref = None   # (profile_code, anim_code) attualmente in timeline
+        self._dirty = False
+
+
         for child in parent.winfo_children():
             child.destroy()
 
@@ -112,21 +118,21 @@ class MainWindow:
         self.current_frame_idx = 0
         self.is_playing = False
         self._after_id = None
-        self.selected_thumb_index = -1
-        self.drag_start_index = None
 
         # Variabili UI
-        self.code_var = tk.StringVar()
-        self.folder_var = tk.StringVar(value=str(Path.cwd()))
-        self.manual_files = []
         self.loop_var = tk.BooleanVar(value=True)
-        self.anchor_var = tk.StringVar(value="bottom")
         self.speed_var = tk.IntVar(value=DEFAULT_DURATION_MS)
         self.viewer_zoom_var = tk.StringVar(value="Fit")
         self.settings = Settings()
 
+        # History / Dirty flag
+        self._history = ProjectHistory(
+            max_depth=int(self.settings.get("editor", "history_depth", 10))
+        )
+        self._dirty = False
+
         self.resources_path = None
-                # Stato salvataggio
+
         # Stato salvataggio
         self._last_save_time = time.time()   # all'apertura il progetto è già su disco
         self._autosave_next_at = None
@@ -135,23 +141,59 @@ class MainWindow:
         self._after_autosave = None
         self._autosave_warned = False
         self._autosave_warn_until = 0
-        # Spritesheet
-        #self.resources_path = None
-        #self.spritesheet_files = []
-        #self.current_spritesheet_index = -1
-        #self.spritesheet_image = None
-        #self.sheet_rows_var = tk.IntVar(value=1)
-        #self.sheet_cols_var = tk.IntVar(value=1)
+        self._last_save_ok = True
+        self._last_save_error_time = 0
 
         # Main frame
         self.main_frame = tk.Frame(parent, bg='#2b2b2b')
         self.main_frame.pack(fill='both', expand=True)
 
+        # Cache sfondo
+        self._bg_cache_key = None       # (mode, color, image_path, canvas_w, canvas_h)
+        self._bg_cache_img = None       # PIL.Image RGBA già composta
+
         self._build_menu()
         self._build_content()
         parent.protocol("WM_DELETE_WINDOW", self._on_close)
+        
 
     def _on_close(self):
+        if self._dirty:
+            choice = messagebox.askyesnocancel(
+                "Modifiche non salvate",
+                f"Il progetto '{self.project.name}' ha modifiche non salvate.\n\n"
+                f"Salvare prima di uscire?"
+            )
+            if choice is None:
+                return
+            if choice:
+                ok = self._save_project()
+                if not ok:
+                    messagebox.showerror("Errore", "Salvataggio fallito. Uscita annullata.")
+                    return
+            else:
+                if not messagebox.askyesno(
+                    "Conferma uscita",
+                    "Le modifiche non salvate andranno perse.\n\nUscire comunque?"
+                ):
+                    return
+        if self._bridge is not None:
+            try:
+                self._bridge.stop()
+            except Exception:
+                pass
+            self._bridge = None
+
+        # Cancella i timer pendenti
+        for attr in ('_status_tick_id', '_after_autosave', '_after_id'):
+            tid = getattr(self, attr, None)
+            if tid:
+                try:
+                    self.root.after_cancel(tid)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
         self.parent.quit()
 
     def _build_menu(self):
@@ -174,7 +216,25 @@ class MainWindow:
                                command=self._open_spritesheet_tool)
         sheet_menu.add_command(label="Esporta spritesheet…", state='disabled')
         tools_menu.add_cascade(label="Spritesheet", menu=sheet_menu)
+  
+        # --- Blender Bridge ---
+        blender_menu = tk.Menu(tools_menu, tearoff=0)
+        blender_menu.add_command(label="Avvia watch…",
+                                 command=self._start_blender_bridge)
+        blender_menu.add_command(label="Ferma watch",
+                                 command=self._stop_blender_bridge)
+        tools_menu.add_cascade(label="Blender Bridge", menu=blender_menu)
 
+        view_menu = tk.Menu(tools_menu, tearoff=0)
+        view_menu.add_command(label="Colore…", command=self._pick_bg_color)
+        view_menu.add_command(label="Immagine…", command=self._pick_bg_image)
+        view_menu.add_command(label="Checkerboard", command=self._set_bg_checker)
+        view_menu.add_separator()
+        view_menu.add_command(label="Adatta: Cover",  command=lambda: self._set_bg_fit("cover"))
+        view_menu.add_command(label="Adatta: Contain", command=lambda: self._set_bg_fit("contain"))
+        view_menu.add_command(label="Adatta: Stretch", command=lambda: self._set_bg_fit("stretch"))
+        tools_menu.add_cascade(label="Sfondo viewer", menu=view_menu)
+  
         tools_menu.add_separator()
         tools_menu.add_command(label="Esporta… (prossimamente)", state='disabled')
 
@@ -184,10 +244,64 @@ class MainWindow:
         help_menu.add_command(label="Informazioni", command=self._show_about)
         menubar.add_cascade(label="Aiuto", menu=help_menu)
 
+    def _pick_bg_color(self):
+        from tkinter import colorchooser
+        current = self.settings.get("viewer", "background_color", "#222222")
+        rgb, hx = colorchooser.askcolor(color=current, title="Colore sfondo")
+        if hx:
+            self.settings.set("viewer", "background_mode", "color")
+            self.settings.set("viewer", "background_color", hx)
+            self._bg_cache_key = None
+            self._update_display()
+
+    def _pick_bg_image(self):
+        path = filedialog.askopenfilename(
+            title="Immagine di sfondo (max 1920x1080 consigliato)",
+            filetypes=[("Immagini", "*.png *.jpg *.jpeg"), ("Tutti i file", "*.*")]
+        )
+        if not path:
+            return
+        # Avvisa se troppo grande
+        try:
+            with Image.open(path) as im:
+                if im.width > 1920 or im.height > 1080:
+                    if not messagebox.askyesno(
+                        "Immagine grande",
+                        f"L'immagine è {im.width}×{im.height}. "
+                        f"Consigliato max 1920×1080.\n\nUsare comunque?"
+                    ):
+                        return
+        except Exception as e:
+            messagebox.showerror("Errore", f"Impossibile leggere l'immagine:\n{e}")
+            return
+
+        self.settings.set("viewer", "background_mode", "image")
+        self.settings.set("viewer", "background_image", path)
+        self._bg_cache_key = None
+        self._update_display()
+
+    def _set_bg_checker(self):
+        self.settings.set("viewer", "background_mode", "checker")
+        self._bg_cache_key = None
+        self._update_display()
+
+    def _set_bg_fit(self, mode):
+        self.settings.set("viewer", "background_fit", mode)
+        self._bg_cache_key = None
+        self._update_display()
+
     def _open_settings(self):
         from .ui_settings import SettingsWindow
         SettingsWindow(self.root)
 
+    def _on_settings_changed(self):
+        self.settings.load()
+        self._history.max_depth = max(1, int(self.settings.get("editor", "history_depth", 10)))
+        self._restart_autosave_timer()
+        self._bind_shortcuts()
+        self._bg_cache_key = None
+        self._update_display()
+        
     def _get_angle_description(self, angle: int) -> str:
         descriptions = {
             1: "frontale",
@@ -202,11 +316,43 @@ class MainWindow:
         return descriptions.get(angle, f"angolo {angle}")
 
     def _close_project(self):
-        
         if self._closed:
             return
+        # Prompt dirty
+        if self._dirty:
+            choice = messagebox.askyesnocancel(
+                "Modifiche non salvate",
+                f"Il progetto '{self.project.name}' ha modifiche non salvate.\n\n"
+                f"Salvare prima di chiudere?"
+            )
+            if choice is None:      # Annulla
+                return
+            if choice:              # Sì
+                ok = self._save_project()
+                if not ok:
+                    messagebox.showerror(
+                        "Errore",
+                        "Salvataggio fallito. Chiusura annullata."
+                    )
+                    return
+            else:                   # No → avviso perdita
+                if not messagebox.askyesno(
+                    "Conferma chiusura",
+                    "Le modifiche non salvate andranno perse.\n\n"
+                    "Chiudere comunque?"
+                ):
+                    return
         self._closed = True
-        ...
+    
+
+        if self._bridge is not None:
+            try:
+                self._bridge.stop()
+            except Exception as e:
+                print(f"[close_project] errore stop bridge: {e}")
+            self._bridge = None
+
+
         if self.is_playing:
             self._pause()
 
@@ -217,6 +363,14 @@ class MainWindow:
             except Exception:
                 pass
             self._status_tick_id = None
+
+        # Cancella il timer autosave pendente
+        if getattr(self, '_after_autosave', None):
+            try:
+                self.root.after_cancel(self._after_autosave)
+            except Exception:
+                pass
+            self._after_autosave = None
         # Rimuove le scorciatoie attaccate alla root
         for combo in self.settings.get("shortcuts").values():
             if combo:
@@ -452,6 +606,8 @@ class MainWindow:
         self._update_angle_dots()
         self._bind_shortcuts()
         self._start_autosave()
+        self.root.bind('<<SettingsChanged>>', lambda e: self._on_settings_changed())
+        self._update_title()
 
 
     # -----------------------------------------------------------------
@@ -598,6 +754,8 @@ class MainWindow:
             messagebox.showerror("Errore", "Impossibile creare il file specchiato.")
             return
 
+        self._snapshot_and_mark()
+
         new_ad = AngleData(
             angle=mirror_angle,
             file=new_file,
@@ -605,7 +763,6 @@ class MainWindow:
             mirrored=False
         )
         target_fg.angles.append(new_ad)
-
         pm = ProjectManager()
         pm.current_project = self.project
         pm._save_project()
@@ -644,6 +801,8 @@ class MainWindow:
         if a_idx >= len(profile.animations):
             return
         anim = profile.animations[a_idx]
+
+        self._snapshot_and_mark()
 
         cloned = 0
         for fg in anim.frames:
@@ -729,6 +888,8 @@ class MainWindow:
         if not messagebox.askyesno("Conferma", f"Eliminare il frame '{current_letter}'?"):
             return
 
+        self._snapshot_and_mark()
+
         self.timeline.delete_frame(self.current_frame_idx)
         del anim.frames[target_idx]
 
@@ -778,7 +939,8 @@ class MainWindow:
             else:
                 self.info_lbl.config(text=f"Libreria '{profile.name}' creata (vuota)")
 
-        dialog = CreateProfileDialog(self.root, self.project, on_profile_created)
+        dialog = CreateProfileDialog(self.root, self.project, on_profile_created,
+                                     pre_commit=self._snapshot_and_mark)
         dialog.root_path.set(self.resources_path)
         dialog._scan_folder()
 
@@ -852,6 +1014,46 @@ class MainWindow:
                                     if f not in groups[figlio][letter][mirror_angle]:
                                         groups[figlio][letter][mirror_angle].append(f)
                                         valid_files += 1
+        # --- CHECK SICUREZZA: evita svuotamento silenzioso della libreria ---
+        new_frame_total = 0
+        new_angle_total = 0
+        for _figlio, _letters in groups.items():
+            for _letter, _angles in _letters.items():
+                new_frame_total += 1
+                new_angle_total += len(_angles)
+
+        if a_idx == -1:
+            # Riguarda l'intero profilo: contiamo tutti i frame di tutte le animazioni
+            old_frame_total = sum(len(a.frames) for a in profile.animations)
+        else:
+            if a_idx < len(profile.animations):
+                old_frame_total = len(profile.animations[a_idx].frames)
+            else:
+                old_frame_total = 0
+
+        if new_frame_total == 0:
+            if not messagebox.askyesno(
+                "Scansione vuota",
+                f"La scansione non ha trovato nessun file valido per il profilo "
+                f"'{profile.code}'.\n\n"
+                f"Se procedi, la libreria"
+                + (f" e le sue {len(profile.animations)} animazioni" if a_idx == -1 else "")
+                + f" verranno svuotate.\n\nContinuare comunque?"
+            ):
+                self.info_lbl.config(text="Aggiornamento annullato (scansione vuota)")
+                return
+
+        elif old_frame_total > 0 and new_frame_total < (old_frame_total * 0.5):
+            if not messagebox.askyesno(
+                "Riduzione significativa",
+                f"La scansione ha trovato {new_frame_total} frame, "
+                f"mentre la libreria attualmente ne ha {old_frame_total}.\n\n"
+                f"È una riduzione superiore al 50%. Procedere comunque?"
+            ):
+                self.info_lbl.config(text="Aggiornamento annullato (riduzione > 50%)")
+                return
+
+        self._snapshot_and_mark()
 
         if a_idx == -1:
             profile.animations.clear()
@@ -980,11 +1182,6 @@ class MainWindow:
             self._update_resources_from_path(path)
 
     # -----------------------------------------------------------------
-    # SPRITESHEET METODI
-    # -----------------------------------------------------------------
-
-    
-    # -----------------------------------------------------------------
     # METODI TIMELINE E PLAYER
     # -----------------------------------------------------------------
 
@@ -1019,20 +1216,34 @@ class MainWindow:
         self._set_controls_state('normal')
 
     def _bind_shortcuts(self):
+        """Registra un unico dispatcher che smista in base alla combinazione premuta."""
         s = self.settings.get("shortcuts")
-        # Rimuove eventuali bind precedenti
-        for combo in s.values():
-            if combo:                      # ← fondamentale: se è stringa vuota, unbind_all("") cancella TUTTO
-                try:
-                    self.root.unbind_all(combo)
-                except tk.TclError:
-                    pass
+        
+        # Nessun unbind_all: registriamo una sola volta un gestore universale
+        self.root.bind_all("<KeyPress>", self._on_any_key, add="+")
 
+    def _on_any_key(self, event):
+        """Confronta la combinazione premuta con quelle configurate."""
+        # Costruisci la stringa <Modificatori-tasto> da event
+        parts = []
+        if event.state & 0x4:   parts.append("Control")
+        if event.state & 0x1:   parts.append("Shift")
+        if event.state & 0x20000: parts.append("Alt")
+        key = event.keysym
+        if len(key) == 1:
+            key = key.lower()
+        
+        combo = "<" + "-".join(parts + [key]) + ">" if parts else f"<{key}>"
+        combo_upper = "<" + "-".join(parts + [key.upper()]) + ">" if parts else f"<{key.upper()}>"
+        
+        s = self.settings.get("shortcuts")
         mapping = {
             "save":       self._save_project,
             "save_as":    self._save_as,
             "open":       lambda: self._close_project(),
             "new":        lambda: self._close_project(),
+            "undo":       self._undo,
+            "redo":       self._redo,
             "play":       self._play,
             "pause":      self._pause,
             "stop":       self._stop,
@@ -1041,12 +1252,15 @@ class MainWindow:
             "next_angle": self._next_angle,
             "prev_angle": self._prev_angle,
         }
-        for action, combo in s.items():
-            if action in mapping and combo:
-                try:
-                    self.root.bind_all(combo, lambda e, f=mapping[action]: f())
-                except tk.TclError:
-                    pass
+        
+        for action, configured in s.items():
+            if action in mapping and configured:
+                if configured == combo or configured == combo_upper:
+                    try:
+                        mapping[action]()
+                    except Exception as e:
+                        print(f"[shortcut] errore in {action}: {e}")
+                    return "break"
 
     def _step_frame(self, delta):
         if not self.timeline.frames:
@@ -1056,46 +1270,70 @@ class MainWindow:
         self._update_display()
 
     def _start_autosave(self):
-         # Avvia sempre il tick dell'etichetta (serve anche per "salvato")
         self._update_save_status_tick()
+        self._restart_autosave_timer()
+
+    def _restart_autosave_timer(self):
+        """Cancella il timer corrente e lo riprogramma in base alle impostazioni attuali."""
+        # Cancella il timer precedente se esiste
+        if getattr(self, '_after_autosave', None):
+            try:
+                self.root.after_cancel(self._after_autosave)
+            except Exception:
+                pass
+            self._after_autosave = None
+
         if not self.settings.get("editor", "autosave_enabled", False):
+            self._autosave_next_at = None
             return
         self._autosave_interval = int(self.settings.get("editor", "autosave_interval_sec", 120))
         self._autosave_next_at = time.time() + self._autosave_interval
         self._after_autosave = self.root.after(self._autosave_interval * 1000,
                                                 self._autosave_tick)
-    
+
     def _autosave_tick(self):
-        try:
-            self._save_project()
-        except Exception as e:
-            print(f"Autosave error: {e}")
-        interval = int(self.settings.get("editor", "autosave_interval_sec", 120))
-        self._after_autosave = self.root.after(interval * 1000, self._autosave_tick)
+        if self._dirty:
+            try:
+                self._save_project()
+            except Exception as e:
+                print(f"Autosave error: {e}")
+        self._autosave_interval = int(self.settings.get("editor", "autosave_interval_sec", 120))
+        self._autosave_next_at = time.time() + self._autosave_interval
+        self._after_autosave = self.root.after(self._autosave_interval * 1000,
+                                                self._autosave_tick)
 
 
     def _update_save_status_tick(self):
+        #print(f"[tick] _last_save_ok={self._last_save_ok} age={time.time()-self._last_save_time:.1f}")
         if not hasattr(self, 'save_status_lbl'):
             return
         now = time.time()
         text = ""
+        color = '#4a9eff'
 
-        # Priorità 1: "salvato" per 3 secondi dopo un salvataggio
-        if (now - self._last_save_time) < 3:
+        if not self._last_save_ok:
+            text = "⚠ salvataggio fallito"
+            color = '#ff5555'
+        elif (now - self._last_save_time) < 2:
             text = "💾 salvato"
-        # Priorità 2: countdown 10s prima dell'autosave, visibile per 3s
+            color = '#4a9eff'
         elif self._autosave_next_at:
             remaining = self._autosave_next_at - now
-            if remaining <= 10 and not self._autosave_warned:
-                self._autosave_warned = True
-                self._autosave_warn_until = now + 3
-            if remaining > 10:
-                self._autosave_warned = False
-            if self._autosave_warn_until > now:
-                text = f"auto tra {max(0, int(remaining))}s"
+
+            # Soglia countdown dinamica: mai più grande di 1/3 dell'intervallo
+            interval = getattr(self, '_autosave_interval', 120)
+            countdown_window = min(10, max(2, interval // 3))
+
+            if remaining <= countdown_window and remaining > 0:
+                # Mostra il countdown REALE, non un valore fisso
+                text = f"auto tra {max(1, int(remaining))}s"
+                color = '#888888'
+            else:
+                text = ""
+                color = '#888888'
 
         try:
-            self.save_status_lbl.config(text=text)
+            self.save_status_lbl.config(text=text, foreground=color)
         except tk.TclError:
             return
         self._status_tick_id = self.root.after(500, self._update_save_status_tick)
@@ -1107,12 +1345,12 @@ class MainWindow:
             if isinstance(child, (ttk.Button, tk.Button)):
                 try:
                     child.config(state=state)
-                except:
+                except Exception:
                     pass
             elif isinstance(child, (ttk.Entry, tk.Entry)):
                 try:
                     child.config(state=state)
-                except:
+                except Exception:
                     pass
 
     def _create_first_profile(self):
@@ -1127,7 +1365,8 @@ class MainWindow:
                 self._update_angle_dots()
                 self.info_lbl.config(text=f"{anim.name} ({len(self.timeline.frames)} frame)")
 
-        CreateProfileDialog(self.root, self.project, on_profile_created)
+        CreateProfileDialog(self.root, self.project, on_profile_created,
+                            pre_commit=self._snapshot_and_mark)
 
     def _on_tree_select(self, event):
         sel = self.tree.selection()
@@ -1163,6 +1402,7 @@ class MainWindow:
             return
 
         anim = profile.animations[a_idx]
+        self._loaded_anim_ref = (profile.code, anim.code)
 
         if profile.folder_path and Path(profile.folder_path).exists():
             filter_prefix = profile.code + anim.code
@@ -1204,6 +1444,7 @@ class MainWindow:
         self.resources_listbox.delete(0, tk.END)
 
     def _clear_timeline(self):
+        self._loaded_anim_ref = None
         self.timeline.clear()
         self.current_frame_idx = 0
         self.canvas.delete('all')
@@ -1219,18 +1460,77 @@ class MainWindow:
             self.dot_canvas.itemconfig(dot_id, fill='#555555', outline='#444444')
 
     def _refresh_tree(self):
+        """Ricostruisce l'albero preservando profili espansi e selezione."""
+        # 1. Ricorda profili espansi (per code)
+        expanded_codes = set()
+        for item, (p_idx, a_idx) in self.tree_item_map.items():
+            if a_idx == -1:
+                try:
+                    if self.tree.item(item, 'open'):
+                        if 0 <= p_idx < len(self.project.profiles):
+                            expanded_codes.add(self.project.profiles[p_idx].code)
+                except tk.TclError:
+                    pass
+
+        # 2. Ricorda la selezione corrente (per code profilo + code anim, se c'è)
+        prev_selection = None
+        sel = self.tree.selection()
+        if sel and sel[0] in self.tree_item_map:
+            p_idx, a_idx = self.tree_item_map[sel[0]]
+            if 0 <= p_idx < len(self.project.profiles):
+                profile_code = self.project.profiles[p_idx].code
+                if a_idx == -1:
+                    prev_selection = (profile_code, None)
+                elif a_idx < len(self.project.profiles[p_idx].animations):
+                    anim_code = self.project.profiles[p_idx].animations[a_idx].code
+                    prev_selection = (profile_code, anim_code)
+
+        # 3. Ricostruisci
         self.tree.delete(*self.tree.get_children())
         self.tree_item_map = {}
 
         for p_idx, profile in enumerate(self.project.profiles):
-            profile_id = self.tree.insert("", "end", text=f"{profile.name} [{profile.code}]")
+            profile_id = self.tree.insert("", "end",
+                                          text=f"{profile.name} [{profile.code}]")
             self.tree_item_map[profile_id] = (p_idx, -1)
+
+            if profile.code in expanded_codes:
+                self.tree.item(profile_id, open=True)
+
             for a_idx, anim in enumerate(profile.animations):
-                anim_id = self.tree.insert(profile_id, "end", text=f"  {anim.name} [{anim.code}]")
+                anim_id = self.tree.insert(profile_id, "end",
+                                           text=f"  {anim.name} [{anim.code}]")
                 self.tree_item_map[anim_id] = (p_idx, a_idx)
+
+        # 4. Ripristina la selezione
+        restored = False
+        if prev_selection is not None:
+            target_profile_code, target_anim_code = prev_selection
+            for item, (p_idx, a_idx) in self.tree_item_map.items():
+                if not (0 <= p_idx < len(self.project.profiles)):
+                    continue
+                profile = self.project.profiles[p_idx]
+                if profile.code != target_profile_code:
+                    continue
+                if target_anim_code is None:
+                    # Era selezionato il profilo
+                    if a_idx == -1:
+                        self.tree.selection_set(item)
+                        self.tree.see(item)
+                        restored = True
+                        break
+                else:
+                    # Era selezionata un'animazione
+                    if a_idx >= 0 and a_idx < len(profile.animations):
+                        if profile.animations[a_idx].code == target_anim_code:
+                            self.tree.selection_set(item)
+                            self.tree.see(item)
+                            restored = True
+                            break
 
         self._check_profiles()
         self._update_button_state()
+        return restored
 
     def _new_animation(self):
         if not self.project.profiles:
@@ -1252,6 +1552,8 @@ class MainWindow:
             messagebox.showwarning("Attenzione", "Il codice deve essere di 2 caratteri.")
             return
         code = code.upper()
+
+        self._snapshot_and_mark()
 
         anim = AnimationData(name=name, code=code, frames=[])
         self.project.profiles[target_p_idx].animations.append(anim)
@@ -1276,6 +1578,7 @@ class MainWindow:
         if a_idx == -1:
             if messagebox.askyesno("Conferma",
                                    f"Eliminare il profilo '{profile.name}' e tutte le sue animazioni?"):
+                self._snapshot_and_mark()
                 del self.project.profiles[p_idx]
                 self.timeline.clear()
                 self._refresh_tree()
@@ -1286,75 +1589,14 @@ class MainWindow:
                 anim = profile.animations[a_idx]
                 if messagebox.askyesno("Conferma",
                                        f"Eliminare l'animazione '{anim.name}'?"):
+                    self._snapshot_and_mark()
                     del profile.animations[a_idx]
                     self.timeline.clear()
                     self._refresh_tree()
                     self._update_display()
                     self.info_lbl.config(text=f"Animazione '{anim.name}' eliminata")
 
-    def load_frames(self):
-        folder = Path(self.folder_var.get())
-        prefix = self.code_var.get().strip().upper()
-        if not folder.exists():
-            messagebox.showwarning("Attenzione", "Scegli prima una cartella.")
-            return
-        if len(prefix) < 4:
-            messagebox.showwarning("Attenzione", "Il prefisso deve essere di almeno 4 caratteri.")
-            return
 
-        all_files = []
-        for ext in (".png", ".jpg", ".jpeg", ".gif"):
-            all_files.extend(folder.glob(f"{prefix}*{ext}"))
-        all_files.extend(folder.glob(f"{prefix}*.jpeg"))
-        all_files = [f for f in all_files if 'spritesheet' not in f.name.lower()]
-
-        if not all_files:
-            self.info_lbl.config(text="Nessun file trovato")
-            return
-
-        groups = {}
-        for f in all_files:
-            stem = f.stem
-            if len(stem) >= 6 and stem.startswith(prefix):
-                letter = stem[4]
-                angle_str = stem[5]
-                if letter.isalpha() and angle_str.isdigit():
-                    angle = int(angle_str)
-                    figlio = stem[2:4]
-                    if figlio not in groups:
-                        groups[figlio] = {}
-                    if letter not in groups[figlio]:
-                        groups[figlio][letter] = {}
-                    if angle not in groups[figlio][letter]:
-                        groups[figlio][letter][angle] = []
-                    groups[figlio][letter][angle].append(f)
-
-        if not groups:
-            self.info_lbl.config(text="Nessun file con formato valido")
-            return
-
-        anim = AnimationData(name="Temp", code=prefix[:2], frames=[])
-        for figlio, letters in sorted(groups.items()):
-            for letter, angles in sorted(letters.items()):
-                frame_group = FrameGroup(letter=letter, angles=[])
-                for angle, files in sorted(angles.items()):
-                    f = files[0]
-                    try:
-                        rel_path = str(f.relative_to(self.project.root_path))
-                    except:
-                        rel_path = str(f)
-                    frame_group.angles.append(AngleData(
-                        angle=angle,
-                        file=rel_path,
-                        duration_ms=DEFAULT_DURATION_MS
-                    ))
-                anim.frames.append(frame_group)
-
-        self.timeline.load_from_animation(anim, self.project.root_path)
-        self.current_frame_idx = 0
-        self._update_display()
-        self._update_angle_dots()
-        self.info_lbl.config(text=f"{len(self.timeline.frames)} frame caricati")
 
     def _update_display(self):
         if not self.timeline.frames:
@@ -1376,10 +1618,7 @@ class MainWindow:
                 self.speed_var.set(self.timeline.get_frame_duration(self.current_frame_idx))
             except Exception:
                 pass
-        total_ms = self.timeline.get_total_ms()
-        self.time_lbl.config(text=f"{total_ms / 1000:.2f}s  {total_ms}ms  {self.timeline.get_total_ticks()}tick")
-        self._draw_thumbnails()
-        self._update_angle_dots()
+
     def _viewer_zoom_in(self):
         if self.viewer_zoom_var.get() == "Fit":
             self.viewer_zoom_var.set(self.VIEWER_ZOOM_LABELS[3])  # 100%
@@ -1405,6 +1644,66 @@ class MainWindow:
             pass
         self._update_display()
 
+    # -----------------------------------------------------------------
+    # SFONDO VIEWER
+    # -----------------------------------------------------------------
+
+    def _make_checker_tile(self):
+        """Tile 16x16 checkerboard, generata una volta."""
+        tile = Image.new("RGBA", (16, 16), (255, 255, 255, 255))
+        for y in range(16):
+            for x in range(16):
+                if ((x // 8) + (y // 8)) % 2 == 0:
+                    tile.putpixel((x, y), (210, 210, 210, 255))
+        return tile
+
+    def _build_background(self, w, h):
+        """Ritorna un PIL.Image RGBA delle dimensioni richieste, secondo
+        la modalità sfondo corrente. Usa la cache se i parametri non sono cambiati."""
+        mode = self.settings.get("viewer", "background_mode", "checker")
+        color = self.settings.get("viewer", "background_color", "#222222")
+        img_path = self.settings.get("viewer", "background_image", "")
+        fit = self.settings.get("viewer", "background_fit", "cover")
+
+        key = (mode, color, img_path, fit, w, h)
+        if self._bg_cache_key == key and self._bg_cache_img is not None:
+            return self._bg_cache_img
+
+        if mode == "color":
+            bg = Image.new("RGBA", (w, h), color)
+
+        elif mode == "image" and img_path and Path(img_path).exists():
+            try:
+                src = Image.open(img_path).convert("RGBA")
+            except Exception:
+                bg = Image.new("RGBA", (w, h), "#222222")
+            else:
+                if fit == "stretch":
+                    bg = src.resize((w, h), Image.LANCZOS)
+                elif fit == "contain":
+                    scale = min(w / src.width, h / src.height)
+                    new = src.resize((int(src.width * scale), int(src.height * scale)), Image.LANCZOS)
+                    bg = Image.new("RGBA", (w, h), "#000000")
+                    bg.paste(new, ((w - new.width) // 2, (h - new.height) // 2), new)
+                else:  # cover
+                    scale = max(w / src.width, h / src.height)
+                    new = src.resize((int(src.width * scale), int(src.height * scale)), Image.LANCZOS)
+                    left = (new.width - w) // 2
+                    top = (new.height - h) // 2
+                    bg = new.crop((left, top, left + w, top + h))
+
+        else:  # checker
+            # Tile ripetuta: veloce anche per 1920x1080
+            tile = self._make_checker_tile()
+            bg = Image.new("RGBA", (w, h))
+            for ty in range(0, h, 16):
+                for tx in range(0, w, 16):
+                    bg.paste(tile, (tx, ty))
+
+        self._bg_cache_key = key
+        self._bg_cache_img = bg
+        return bg
+
     def _show_frame(self, idx):
         if idx < 0 or idx >= len(self.timeline.frames):
             return
@@ -1419,6 +1718,7 @@ class MainWindow:
         if h < 10:
             h = 300
 
+        # Scala dello sprite
         if self.viewer_zoom_var.get() == "Fit":
             scale = min((w - 20) / frame.width,
                         (h - 20) / frame.height,
@@ -1432,21 +1732,20 @@ class MainWindow:
                 scale = 1.0
 
         disp = frame.resize((int(frame.width * scale),
-                            int(frame.height * scale)),
+                             int(frame.height * scale)),
                             Image.NEAREST)
 
-        checker = Image.new("RGBA", disp.size, (255, 255, 255, 255))
-        for y in range(0, disp.height, 8):
-            for x in range(0, disp.width, 8):
-                if ((x // 8) + (y // 8)) % 2 == 0:
-                    for yy in range(min(8, disp.height - y)):
-                        for xx in range(min(8, disp.width - x)):
-                            checker.putpixel((x + xx, y + yy), (210, 210, 210, 255))
+        # Sfondo già pronto (cachato)
+        bg = self._build_background(w, h).copy()
 
-        checker.paste(disp, (0, 0), disp)
-        self._tk_img = ImageTk.PhotoImage(checker)
+        # Compone sprite centrato sullo sfondo
+        px = (w - disp.width) // 2
+        py = (h - disp.height) // 2
+        bg.paste(disp, (px, py), disp)
+
+        self._tk_img = ImageTk.PhotoImage(bg)
         self.canvas.delete('all')
-        self.canvas.create_image(w // 2, h // 2, anchor='center', image=self._tk_img)
+        self.canvas.create_image(0, 0, anchor='nw', image=self._tk_img)
 
     def _draw_thumbnails(self):
         self.thumb_canvas.delete('all')
@@ -1561,28 +1860,281 @@ class MainWindow:
     def _save_project(self):
         pm = ProjectManager()
         pm.current_project = self.project
-        pm._save_project()
-        self._last_save_time = time.time()
-        if self._autosave_next_at:
-            self._autosave_next_at = time.time() + getattr(self, '_autosave_interval', 120)
-        self._autosave_warned = False
-        self._autosave_warn_until = 0
+        ok = pm._save_project()
+
+        if ok:
+            self._last_save_time = time.time()
+            self._last_save_ok = True
+            if self._autosave_next_at:
+                self._autosave_next_at = time.time() + getattr(self, '_autosave_interval', 120)
+            self._autosave_warned = False
+            self._autosave_warn_until = 0
+            self._dirty = False
+            self._update_title()
+        else:
+            self._last_save_ok = False
+            self._last_save_error_time = time.time()
+        return ok
 
     def _save_as(self):
-        path = filedialog.asksaveasfilename(defaultextension=PROJECT_EXTENSION,
-                                           filetypes=[("Sprite Project", f"*{PROJECT_EXTENSION}")])
-        if path:
-            path = Path(path)
-            self.project.root_path = path.parent
+        path = filedialog.asksaveasfilename(
+            defaultextension=PROJECT_EXTENSION,
+            filetypes=[("Sprite Project", f"*{PROJECT_EXTENSION}")]
+        )
+        if not path:
+            return
+        path = Path(path)
+        new_root = path.parent
+
+        # --- Caso 1: stessa cartella (rinomina) → comportamento attuale ---
+        if new_root == self.project.root_path:
             self.project.name = path.stem
             pm = ProjectManager()
             pm.current_project = self.project
             pm._save_project()
             self._last_save_time = time.time()
+            self.root.title(f"{APP_NAME} v{APP_VERSION} - {self.project.name}")
+            return
+
+        # --- Caso 2: cartella diversa → verifica se ci sono percorsi relativi ---
+        relative_count = self._count_relative_assets()
+        if relative_count == 0:
+            # Nessun file relativo: il salvataggio è sicuro, procedi diretto
+            self.project.root_path = new_root
+            self.project.name = path.stem
+            pm = ProjectManager()
+            pm.current_project = self.project
+            pm._save_project()
+            self._last_save_time = time.time()
+            self.root.title(f"{APP_NAME} v{APP_VERSION} - {self.project.name}")
+            return
+
+        # --- Dialog a 3 scelte ---
+        choice = self._ask_save_as_mode(new_root, relative_count)
+        if choice is None:
+            return  # annullato
+
+        if choice == "copy":
+            errors = self._copy_assets_to(new_root)
+            if errors:
+                preview = "\n".join(errors[:10])
+                if len(errors) > 10:
+                    preview += f"\n… e altri {len(errors) - 10}"
+                if not messagebox.askyesno(
+                    "Copia con avvisi",
+                    f"Alcuni file non sono stati copiati:\n\n{preview}\n\n"
+                    f"Proseguire comunque col salvataggio?"
+                ):
+                    return
+            # Dopo la copia, i percorsi restano relativi e puntano ai file
+            # nella nuova root: la struttura è coerente
+
+        elif choice == "absolute":
+            self._convert_assets_to_absolute()
+
+        # Ora salva
+        self.project.root_path = new_root
+        self.project.name = path.stem
+        pm = ProjectManager()
+        pm.current_project = self.project
+        pm._save_project()
+        self._last_save_time = time.time()
+        self.root.title(f"{APP_NAME} v{APP_VERSION} - {self.project.name}")
+
+    def _count_relative_assets(self):
+        """Conta quanti AngleData hanno un percorso relativo non vuoto."""
+        count = 0
+        for ad in self._iter_all_angles():
+            if ad.file and not Path(ad.file).is_absolute():
+                count += 1
+        return count
+
+    def _iter_all_angles(self):
+        """Generatore: itera su tutti gli AngleData del progetto."""
+        for profile in self.project.profiles:
+            for anim in profile.animations:
+                for fg in anim.frames:
+                    for ad in fg.angles:
+                        yield ad
+
+    def _ask_save_as_mode(self, new_root, count):
+        """Dialog a 3 scelte. Ritorna 'copy' | 'absolute' | None."""
+        win = tk.Toplevel(self.root)
+        win.title("Salva con nome in una cartella diversa")
+        win.geometry("640x360")
+        win.configure(bg='#2b2b2b')
+        win.transient(self.root)
+        win.grab_set()
+        win.resizable(False, False)
+        win.focus_force()
+
+        tk.Label(win, text="Salvataggio in una nuova cartella",
+                font=('Segoe UI', 14, 'bold'),
+                bg='#2b2b2b', fg='#ffffff').pack(pady=(20, 10))
+
+        text = (
+            f"Il progetto ha {count} file immagine con percorso relativo\n"
+            f"alla cartella attuale:\n"
+            f"  {self.project.root_path}\n\n"
+            f"Nuova cartella:\n"
+            f"  {new_root}\n\n"
+            f"Scegli come gestire i file immagine:"
+        )
+        tk.Label(win, text=text, font=('Segoe UI', 10),
+                bg='#2b2b2b', fg='#cccccc', justify='left').pack(padx=30)
+
+        result = {'value': None}
+
+        def choose(mode):
+            result['value'] = mode
+            win.grab_release()
+            win.destroy()
+
+        btn_frame = tk.Frame(win, bg='#2b2b2b')
+        btn_frame.pack(pady=20)
+
+        # Suggerito: converti in assoluti
+        tk.Button(btn_frame, text="Converti in assoluti",
+                font=('Segoe UI', 10, 'bold'),
+                bg='#4a9eff', fg='white', relief='flat',
+                padx=18, pady=10,
+                command=lambda: choose("absolute")).pack(side='left', padx=6)
+
+        tk.Button(btn_frame, text="Copia le immagini",
+                font=('Segoe UI', 10),
+                bg='#555555', fg='white', relief='flat',
+                padx=18, pady=10,
+                command=lambda: choose("copy")).pack(side='left', padx=6)
+
+        tk.Button(btn_frame, text="Annulla",
+                font=('Segoe UI', 10),
+                bg='#555555', fg='white', relief='flat',
+                padx=18, pady=10,
+                command=lambda: choose(None)).pack(side='left', padx=6)
+
+        hint = (
+            "• Converti in assoluti: il progetto punta ai file attuali, "
+            "ma non è più portabile\n"
+            "• Copia: duplica le immagini nella nuova cartella, "
+            "il progetto resta autonomo"
+        )
+        tk.Label(win, text=hint, font=('Segoe UI', 8),
+                bg='#2b2b2b', fg='#888888',
+                justify='left').pack(padx=30, pady=(0, 10))
+
+        self.root.wait_window(win)
+        return result['value']
+
+    def _copy_assets_to(self, new_root):
+        """Copia i file referenziati nella nuova root, mantenendo la struttura
+        relativa. Ritorna una lista di errori (stringhe)."""
+        import shutil
+        old_root = self.project.root_path
+        errors = []
+
+        for ad in self._iter_all_angles():
+            if not ad.file:
+                continue
+            src = Path(ad.file)
+            if not src.is_absolute():
+                src = old_root / src
+            if not src.exists():
+                errors.append(f"Non trovato: {ad.file}")
+                continue
+
+            try:
+                rel = src.relative_to(old_root)
+            except ValueError:
+                errors.append(f"Fuori dalla cartella progetto: {ad.file}")
+                continue
+
+            dst = new_root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if not dst.exists() or dst.stat().st_mtime < src.stat().st_mtime:
+                    shutil.copy2(src, dst)
+            except Exception as e:
+                errors.append(f"Errore copiando {ad.file}: {e}")
+
+        return errors
+
+    def _convert_assets_to_absolute(self):
+        """Converte i percorsi relativi in assoluti (basandosi sulla root attuale)."""
+        old_root = self.project.root_path
+        for ad in self._iter_all_angles():
+            if not ad.file:
+                continue
+            p = Path(ad.file)
+            if not p.is_absolute():
+                p = old_root / p
+            ad.file = str(p)
 
     def _show_about(self):
         messagebox.showinfo("Informazioni", f"{APP_NAME} v{APP_VERSION}\n\nLettore 2.5D con supporto angoli 1-8\nSpritesheet integrato\n© 2026 - Yagor Studio")
+    # -----------------------------------------------------------------
+    # UNDO / REDO / DIRTY
+    # -----------------------------------------------------------------
 
+    def _update_title(self):
+        base = f"{APP_NAME} v{APP_VERSION} - {self.project.name}"
+        if self._dirty:
+            base += " *"
+        self.root.title(base)
+
+    def _mark_dirty(self):
+        if not self._dirty:
+            self._dirty = True
+            self._update_title()
+
+    def _snapshot_and_mark(self):
+        """Salva uno snapshot del progetto e marca come modificato.
+        Va chiamato PRIMA di qualsiasi modifica che entra nell'undo."""
+        self._history.push(self.project.to_dict())
+        self._mark_dirty()
+
+    def _undo(self):
+        if not self._history.can_undo():
+            self.info_lbl.config(text="Niente da annullare")
+            return
+        current = self.project.to_dict()
+        previous = self._history.undo(current)
+        if previous is None:
+            return
+        self._load_snapshot(previous)
+
+    def _redo(self):
+        if not self._history.can_redo():
+            self.info_lbl.config(text="Niente da ripetere")
+            return
+        current = self.project.to_dict()
+        nxt = self._history.redo(current)
+        if nxt is None:
+            return
+        self._load_snapshot(nxt)
+
+    def _load_snapshot(self, snapshot_dict):
+        """Sostituisce il progetto con uno snapshot e ricarica tutta la UI."""
+        from .models import ProjectData
+
+        # Sostituisci il progetto
+        self.project = ProjectData.from_dict(snapshot_dict, self.project.root_path)
+
+        # Ricostruisci l'albero (preserva espansione + selezione)
+        self._refresh_tree()
+
+        # Se c'era una selezione, ricarica anche la timeline
+        if self.tree.selection():
+            self._on_tree_select(None)
+        else:
+            self._clear_timeline()
+            self._clear_resources()
+            self._update_angle_dots()
+
+        # L'undo non rende il progetto "pulito"
+        self._mark_dirty()
+        self.info_lbl.config(text="↶ stato ripristinato")
+
+        
     def _open_spritesheet_tool(self):
         from .ui_spritesheet import SpritesheetWindow
         SpritesheetWindow(
@@ -1602,11 +2154,89 @@ class MainWindow:
             self._update_angle_dots()
             self.info_lbl.config(text=f"{anim.name} ({len(self.timeline.frames)} frame)")
 
-    def _go_to_welcome(self):
-        self.main_frame.destroy()
-        WelcomeScreen(self.root, self._on_project_loaded)
-
     def _on_project_loaded(self, project):
         self.project = project
         self._build_content()
         self.root.title(f"{APP_NAME} v{APP_VERSION} - {project.name}")
+            # -----------------------------------------------------------------
+    # BLENDER BRIDGE
+    # -----------------------------------------------------------------
+
+    def _start_blender_bridge(self):
+        folder = filedialog.askdirectory(
+            title="Cartella di output di Blender (dove sta manifest.json)"
+        )
+        if not folder:
+            return
+
+        # Se ce n'era uno attivo, fermalo prima
+        if self._bridge is not None:
+            self._bridge.stop()
+            self._bridge = None
+
+        from .blender_bridge import BlenderBridge
+        self._bridge = BlenderBridge(Path(folder), self._on_blender_update)
+        self._bridge.start(self.root)
+        self.info_lbl.config(text=f"👁 Watch Blender attivo: {folder}")
+
+    def _stop_blender_bridge(self):
+        if self._bridge is not None:
+            self._bridge.stop()
+            self._bridge = None
+            self.info_lbl.config(text="Watch Blender fermato")
+
+    def _on_blender_update(self, manifest: dict):
+        from .blender_import import apply_manifest_to_project
+
+        kind = manifest.get("kind", "full")
+        if kind != "live":
+            self._snapshot_and_mark()
+
+        try:
+            profile, anim, action = apply_manifest_to_project(
+                self.project, manifest, self.project.root_path
+            )
+        except Exception as e:
+            self.info_lbl.config(text=f"⚠ Import Blender fallito: {e}")
+            return
+
+        # --- LIVE: merge chirurgico ---
+        if action == "live_updated":
+            self.timeline.load_from_animation(anim, self.project.root_path)
+
+            if self.current_frame_idx >= len(self.timeline.frames):
+                self.current_frame_idx = 0
+
+            self._update_display()
+            try:
+                self.canvas.update_idletasks()
+            except Exception:
+                pass
+
+            self.info_lbl.config(text=f"● live {profile.code}{anim.code} aggiornato")
+            # Niente save per il live: il progetto verrà salvato al prossimo save/autosave
+            return
+
+        # --- FULL: comportamento classico ---
+        pm = ProjectManager()
+        pm.current_project = self.project
+        pm._save_project()
+
+        # --- FULL: comportamento classico ---
+        self._refresh_tree()
+        self._check_profiles()
+        was_loaded = (self._loaded_anim_ref == (profile.code, anim.code))
+        if was_loaded:
+            self.timeline.load_from_animation(anim, self.project.root_path)
+            self.current_frame_idx = 0
+            if self.timeline.frames:
+                available = self.timeline.get_available_angles(0)
+                default_angle = 1 if 1 in available else (available[0] if available else 1)
+                self._set_angle(default_angle)
+            self._update_display()
+        msg = {
+            "created_profile": f"🎬 Nuova libreria '{profile.name}' ({len(anim.frames)} frame)",
+            "created_anim":    f"🎬 Nuova animazione '{anim.name}' ({len(anim.frames)} frame)",
+            "updated_anim":    f"🎬 Aggiornata '{anim.name}' ({len(anim.frames)} frame)",
+        }.get(action, "🎬 Import Blender completato")
+        self.info_lbl.config(text=msg)

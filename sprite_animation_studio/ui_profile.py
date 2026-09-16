@@ -8,10 +8,11 @@ from .project_manager import ProjectManager
 from .constants import IMG_EXTENSIONS, DEFAULT_DURATION_MS
 
 class CreateProfileDialog:
-    def __init__(self, parent, project, on_complete):
+    def __init__(self, parent, project, on_complete, pre_commit=None):
         self.parent = parent
         self.project = project
         self.on_complete = on_complete
+        self.pre_commit = pre_commit
 
         self.window = tk.Toplevel(parent)
         self.window.title("Crea nuova libreria")
@@ -139,39 +140,23 @@ class CreateProfileDialog:
             all_images.extend(root.rglob(f"*{ext}"))
         all_images.extend(root.rglob("*.jpeg"))
 
-        print(f"DEBUG _scan_folder: {len(all_images)} files trovati nella cartella {root}")
-        for f in all_images:
-            print(f"  DEBUG: {f.name}")
-
         groups = {}
         valid_files = 0
 
         for f in all_images:
             stem = f.stem
-            print(f"  DEBUG: analizzo {stem}")
             if len(stem) >= 6:
                 code_full = stem[:4]
                 file_padre = code_full[:2]
                 figlio = code_full[2:4]
-                print(f"    padre={file_padre}, figlio={figlio}")
                 if file_padre == padre:
                     rest = stem[4:]
                     if len(rest) >= 2 and rest[0].isalpha() and rest[1].isdigit():
                         letter = rest[0]
-                        angle_str = rest[1]
-                        angle = int(angle_str)
-                        # --- MODIFICA QUI: angolo 0 -> 1 ---
+                        angle = int(rest[1])
                         if angle == 0:
                             angle = 1
-                        # --- fine modifica ---
-                        print(f"    letter={letter}, angle={angle}")
-                        if figlio not in groups:
-                            groups[figlio] = {}
-                        if letter not in groups[figlio]:
-                            groups[figlio][letter] = {}
-                        if angle not in groups[figlio][letter]:
-                            groups[figlio][letter][angle] = []
-                        groups[figlio][letter][angle].append(f)
+                        groups.setdefault(figlio, {}).setdefault(letter, {}).setdefault(angle, []).append(f)
                         valid_files += 1
 
                         if len(stem) >= 8:
@@ -180,22 +165,16 @@ class CreateProfileDialog:
                             if mirror_letter.isalpha() and mirror_angle_str.isdigit():
                                 mirror_angle = int(mirror_angle_str)
                                 if (angle == 2 and mirror_angle == 8) or \
-                                (angle == 8 and mirror_angle == 2) or \
-                                (angle == 3 and mirror_angle == 7) or \
-                                (angle == 7 and mirror_angle == 3) or \
-                                (angle == 4 and mirror_angle == 6) or \
-                                (angle == 6 and mirror_angle == 4):
+                                   (angle == 8 and mirror_angle == 2) or \
+                                   (angle == 3 and mirror_angle == 7) or \
+                                   (angle == 7 and mirror_angle == 3) or \
+                                   (angle == 4 and mirror_angle == 6) or \
+                                   (angle == 6 and mirror_angle == 4):
                                     if mirror_angle not in groups[figlio][letter]:
                                         groups[figlio][letter][mirror_angle] = []
                                     if f not in groups[figlio][letter][mirror_angle]:
                                         groups[figlio][letter][mirror_angle].append(f)
                                         valid_files += 1
-                    else:
-                        print(f"    rest non valido: {rest}")
-                else:
-                    print(f"    padre non corrisponde: {file_padre} != {padre}")
-            else:
-                print(f"    nome troppo corto (<6)")
 
         if not groups or valid_files == 0:
             self.preview_listbox.insert(tk.END, "Nessun file valido trovato (formato: SPRITE+ANIMAZIONE+FRAME+COORDINATA).")
@@ -259,10 +238,12 @@ class CreateProfileDialog:
                                 duration_ms=DEFAULT_DURATION_MS,
                                 mirrored=mirrored
                             ))
+                            
                     anim.frames.append(frame_group)
                 profile.animations.append(anim)
-
         # Se NON ci sono gruppi, la libreria rimane vuota (senza animazioni)
+        if self.pre_commit:
+            self.pre_commit()
 
         self.project.profiles.append(profile)
 

@@ -13,10 +13,8 @@ class TimelineModel:
         self._total_duration = 0
 
     def load_from_animation(self, anim: AnimationData, project_root: Path):
-        print(f"DEBUG: load_from_animation: {anim.name}, {len(anim.frames)} frame groups")
         self.frames = []
         for frame_group in anim.frames:
-            print(f"  DEBUG: frame group letter {frame_group.letter}, {len(frame_group.angles)} angles")
             new_group = FrameGroup(
                 letter=frame_group.letter,
                 duration_ms=frame_group.duration_ms
@@ -26,7 +24,6 @@ class TimelineModel:
                 if not p.is_absolute():
                     p = project_root / p
                 if p.exists():
-                    print(f"    DEBUG: angle {angle_data.angle} file found: {p}")
                     new_group.angles.append(AngleData(
                         angle=angle_data.angle,
                         file=str(p),
@@ -34,7 +31,6 @@ class TimelineModel:
                         mirrored=angle_data.mirrored
                     ))
                 else:
-                    print(f"    DEBUG: angle {angle_data.angle} file NOT found: {p}")
                     new_group.angles.append(AngleData(
                         angle=angle_data.angle,
                         file=angle_data.file,
@@ -46,18 +42,20 @@ class TimelineModel:
         self._calc_total()
         if self.frames:
             self._load_images_for_angle(self.current_angle)
-        print(f"DEBUG: load_from_animation completato, {len(self.frames)} frame caricati")
-
+            
     def _load_images_for_angle(self, angle: int):
         for frame_group in self.frames:
             for angle_data in frame_group.angles:
                 if angle_data.angle == angle:
                     try:
-                        img = Image.open(angle_data.file).convert("RGBA")
+                        # with -> chiude il file handle su Windows
+                        with Image.open(angle_data.file) as src:
+                            img = src.convert("RGBA")
                         if angle_data.mirrored:
                             img = img.transpose(Image.FLIP_LEFT_RIGHT)
                         angle_data.image = img
-                    except:
+                    except Exception as e:
+                        print(f"[timeline] reload fallito {angle_data.file}: {e}")
                         angle_data.image = None
                     break
 

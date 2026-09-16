@@ -10,12 +10,15 @@ DEFAULTS = {
         "autosave_enabled": False,
         "autosave_interval_sec": 120,
         "default_duration_ms": 120,
+        "history_depth": 10,
     },
     "shortcuts": {
         "save":            "<Control-s>",
         "save_as":         "<Control-Shift-S>",
         "open":            "<Control-o>",
         "new":             "<Control-n>",
+        "undo":            "<Control-z>",
+        "redo":            "<Control-Shift-Z>",
         "play":            "<F5>",
         "pause":           "<F6>",
         "stop":            "<F7>",
@@ -26,6 +29,12 @@ DEFAULTS = {
     },
     "paths": {
         "last_export_dir": "",
+    },
+    "viewer": {
+        "background_mode": "checker",
+        "background_color": "#222222",
+        "background_image": "",
+        "background_fit": "cover",
     },
 }
 

@@ -24,7 +24,7 @@ def main():
     root = tk.Tk()
     root.title(f"{APP_NAME} v{APP_VERSION}")
     root.geometry("1600x1000")
-    root.minsize(1200, 800)
+    root.minsize(900, 600)
     root.configure(bg='#1a1a1a')
     root.state('zoomed')
 

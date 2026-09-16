@@ -51,7 +51,7 @@ imported by:
 
 <div class="node">
   <a name="run.py"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/run.py" type="text/plain"><tt>run.py</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/run.py" type="text/plain"><tt>run.py</tt></a>
 <span class="moduletype">Script</span>  <div class="import">
 imports:
     <a href="#_collections_abc">_collections_abc</a>
@@ -8284,6 +8284,7 @@ imported by:
     <a href="#json.decoder">json.decoder</a>
  &#8226;   <a href="#json.encoder">json.encoder</a>
  &#8226;   <a href="#json.scanner">json.scanner</a>
+ &#8226;   <a href="#sprite_animation_studio.blender_bridge">sprite_animation_studio.blender_bridge</a>
  &#8226;   <a href="#sprite_animation_studio.project_manager">sprite_animation_studio.project_manager</a>
  &#8226;   <a href="#sprite_animation_studio.settings">sprite_animation_studio.settings</a>
 
@@ -8865,6 +8866,8 @@ imported by:
  &#8226;   <a href="#importlib.resources._legacy">importlib.resources._legacy</a>
  &#8226;   <a href="#importlib.resources.abc">importlib.resources.abc</a>
  &#8226;   <a href="#importlib.resources.readers">importlib.resources.readers</a>
+ &#8226;   <a href="#sprite_animation_studio.blender_bridge">sprite_animation_studio.blender_bridge</a>
+ &#8226;   <a href="#sprite_animation_studio.blender_import">sprite_animation_studio.blender_import</a>
  &#8226;   <a href="#sprite_animation_studio.constants">sprite_animation_studio.constants</a>
  &#8226;   <a href="#sprite_animation_studio.models">sprite_animation_studio.models</a>
  &#8226;   <a href="#sprite_animation_studio.project_manager">sprite_animation_studio.project_manager</a>
@@ -9372,6 +9375,7 @@ imported by:
     <a href="#PIL.EpsImagePlugin">PIL.EpsImagePlugin</a>
  &#8226;   <a href="#PIL.ImageShow">PIL.ImageShow</a>
  &#8226;   <a href="#argparse">argparse</a>
+ &#8226;   <a href="#sprite_animation_studio.ui_main">sprite_animation_studio.ui_main</a>
  &#8226;   <a href="#tarfile">tarfile</a>
  &#8226;   <a href="#tempfile">tempfile</a>
  &#8226;   <a href="#zipfile">zipfile</a>
@@ -9427,10 +9431,13 @@ imported by:
 
 <div class="node">
   <a name="sprite_animation_studio"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/__init__.py" type="text/plain"><tt>sprite_animation_studio</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/__init__.py" type="text/plain"><tt>sprite_animation_studio</tt></a>
 <span class="moduletype">Package</span>  <div class="import">
 imported by:
-    <a href="#sprite_animation_studio.constants">sprite_animation_studio.constants</a>
+    <a href="#sprite_animation_studio.blender_bridge">sprite_animation_studio.blender_bridge</a>
+ &#8226;   <a href="#sprite_animation_studio.blender_import">sprite_animation_studio.blender_import</a>
+ &#8226;   <a href="#sprite_animation_studio.constants">sprite_animation_studio.constants</a>
+ &#8226;   <a href="#sprite_animation_studio.history">sprite_animation_studio.history</a>
  &#8226;   <a href="#sprite_animation_studio.main">sprite_animation_studio.main</a>
  &#8226;   <a href="#sprite_animation_studio.models">sprite_animation_studio.models</a>
  &#8226;   <a href="#sprite_animation_studio.project_manager">sprite_animation_studio.project_manager</a>
@@ -9447,8 +9454,48 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="sprite_animation_studio.blender_bridge"></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/blender_bridge.py" type="text/plain"><tt>sprite_animation_studio.blender_bridge</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#json">json</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#sprite_animation_studio">sprite_animation_studio</a>
+ &#8226;   <a href="#sprite_animation_studio.constants">sprite_animation_studio.constants</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#sprite_animation_studio.ui_main">sprite_animation_studio.ui_main</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="sprite_animation_studio.blender_import"></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/blender_import.py" type="text/plain"><tt>sprite_animation_studio.blender_import</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#sprite_animation_studio">sprite_animation_studio</a>
+ &#8226;   <a href="#sprite_animation_studio.constants">sprite_animation_studio.constants</a>
+ &#8226;   <a href="#sprite_animation_studio.models">sprite_animation_studio.models</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#sprite_animation_studio.ui_main">sprite_animation_studio.ui_main</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="sprite_animation_studio.constants"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/constants.py" type="text/plain"><tt>sprite_animation_studio.constants</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/constants.py" type="text/plain"><tt>sprite_animation_studio.constants</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#pathlib">pathlib</a>
@@ -9457,7 +9504,9 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#sprite_animation_studio.main">sprite_animation_studio.main</a>
+    <a href="#sprite_animation_studio.blender_bridge">sprite_animation_studio.blender_bridge</a>
+ &#8226;   <a href="#sprite_animation_studio.blender_import">sprite_animation_studio.blender_import</a>
+ &#8226;   <a href="#sprite_animation_studio.main">sprite_animation_studio.main</a>
  &#8226;   <a href="#sprite_animation_studio.models">sprite_animation_studio.models</a>
  &#8226;   <a href="#sprite_animation_studio.project_manager">sprite_animation_studio.project_manager</a>
  &#8226;   <a href="#sprite_animation_studio.settings">sprite_animation_studio.settings</a>
@@ -9472,8 +9521,24 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="sprite_animation_studio.history"></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/history.py" type="text/plain"><tt>sprite_animation_studio.history</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#sprite_animation_studio">sprite_animation_studio</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#sprite_animation_studio.ui_main">sprite_animation_studio.ui_main</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="sprite_animation_studio.main"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/main.py" type="text/plain"><tt>sprite_animation_studio.main</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/main.py" type="text/plain"><tt>sprite_animation_studio.main</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#sprite_animation_studio">sprite_animation_studio</a>
@@ -9495,7 +9560,7 @@ imported by:
 
 <div class="node">
   <a name="sprite_animation_studio.models"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/models.py" type="text/plain"><tt>sprite_animation_studio.models</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/models.py" type="text/plain"><tt>sprite_animation_studio.models</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#dataclasses">dataclasses</a>
@@ -9507,7 +9572,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#sprite_animation_studio.project_manager">sprite_animation_studio.project_manager</a>
+    <a href="#sprite_animation_studio.blender_import">sprite_animation_studio.blender_import</a>
+ &#8226;   <a href="#sprite_animation_studio.project_manager">sprite_animation_studio.project_manager</a>
  &#8226;   <a href="#sprite_animation_studio.timeline">sprite_animation_studio.timeline</a>
  &#8226;   <a href="#sprite_animation_studio.ui_main">sprite_animation_studio.ui_main</a>
  &#8226;   <a href="#sprite_animation_studio.ui_profile">sprite_animation_studio.ui_profile</a>
@@ -9519,7 +9585,7 @@ imported by:
 
 <div class="node">
   <a name="sprite_animation_studio.project_manager"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/project_manager.py" type="text/plain"><tt>sprite_animation_studio.project_manager</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/project_manager.py" type="text/plain"><tt>sprite_animation_studio.project_manager</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#datetime">datetime</a>
@@ -9544,7 +9610,7 @@ imported by:
 
 <div class="node">
   <a name="sprite_animation_studio.settings"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/settings.py" type="text/plain"><tt>sprite_animation_studio.settings</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/settings.py" type="text/plain"><tt>sprite_animation_studio.settings</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#json">json</a>
@@ -9564,7 +9630,7 @@ imported by:
 
 <div class="node">
   <a name="sprite_animation_studio.timeline"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/timeline.py" type="text/plain"><tt>sprite_animation_studio.timeline</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/timeline.py" type="text/plain"><tt>sprite_animation_studio.timeline</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#PIL">PIL</a>
@@ -9586,7 +9652,7 @@ imported by:
 
 <div class="node">
   <a name="sprite_animation_studio.ui_main"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/ui_main.py" type="text/plain"><tt>sprite_animation_studio.ui_main</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/ui_main.py" type="text/plain"><tt>sprite_animation_studio.ui_main</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#PIL">PIL</a>
@@ -9594,8 +9660,12 @@ imports:
  &#8226;   <a href="#PIL.ImageTk">PIL.ImageTk</a>
  &#8226;   <a href="#math">math</a>
  &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#shutil">shutil</a>
  &#8226;   <a href="#sprite_animation_studio">sprite_animation_studio</a>
+ &#8226;   <a href="#sprite_animation_studio.blender_bridge">sprite_animation_studio.blender_bridge</a>
+ &#8226;   <a href="#sprite_animation_studio.blender_import">sprite_animation_studio.blender_import</a>
  &#8226;   <a href="#sprite_animation_studio.constants">sprite_animation_studio.constants</a>
+ &#8226;   <a href="#sprite_animation_studio.history">sprite_animation_studio.history</a>
  &#8226;   <a href="#sprite_animation_studio.models">sprite_animation_studio.models</a>
  &#8226;   <a href="#sprite_animation_studio.project_manager">sprite_animation_studio.project_manager</a>
  &#8226;   <a href="#sprite_animation_studio.settings">sprite_animation_studio.settings</a>
@@ -9607,6 +9677,7 @@ imports:
  &#8226;   <a href="#sprite_animation_studio.ui_welcome">sprite_animation_studio.ui_welcome</a>
  &#8226;   <a href="#time">time</a>
  &#8226;   <a href="#tkinter">tkinter</a>
+ &#8226;   <a href="#tkinter.colorchooser">tkinter.colorchooser</a>
  &#8226;   <a href="#tkinter.filedialog">tkinter.filedialog</a>
  &#8226;   <a href="#tkinter.messagebox">tkinter.messagebox</a>
  &#8226;   <a href="#tkinter.simpledialog">tkinter.simpledialog</a>
@@ -9624,7 +9695,7 @@ imported by:
 
 <div class="node">
   <a name="sprite_animation_studio.ui_profile"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/ui_profile.py" type="text/plain"><tt>sprite_animation_studio.ui_profile</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/ui_profile.py" type="text/plain"><tt>sprite_animation_studio.ui_profile</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#pathlib">pathlib</a>
@@ -9648,7 +9719,7 @@ imported by:
 
 <div class="node">
   <a name="sprite_animation_studio.ui_settings"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/ui_settings.py" type="text/plain"><tt>sprite_animation_studio.ui_settings</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/ui_settings.py" type="text/plain"><tt>sprite_animation_studio.ui_settings</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#sprite_animation_studio">sprite_animation_studio</a>
@@ -9668,7 +9739,7 @@ imported by:
 
 <div class="node">
   <a name="sprite_animation_studio.ui_spritesheet"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/ui_spritesheet.py" type="text/plain"><tt>sprite_animation_studio.ui_spritesheet</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/ui_spritesheet.py" type="text/plain"><tt>sprite_animation_studio.ui_spritesheet</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#PIL">PIL</a>
@@ -9695,7 +9766,7 @@ imported by:
 
 <div class="node">
   <a name="sprite_animation_studio.ui_welcome"></a>
-  <a target="code" href="///M:/Archivio%20rete/DOOM/DOOM%20TestWeapons/Sprite%20Animation%20Studio/v0.6v0.6.5/github/sprite_animation_studio/ui_welcome.py" type="text/plain"><tt>sprite_animation_studio.ui_welcome</tt></a>
+  <a target="code" href="///C:/Dev/sprite-animation-studio/sprite_animation_studio/ui_welcome.py" type="text/plain"><tt>sprite_animation_studio.ui_welcome</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#PIL">PIL</a>
@@ -10238,6 +10309,7 @@ imports:
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#sys">sys</a>
+ &#8226;   <a href="#tkinter.colorchooser">tkinter.colorchooser</a>
  &#8226;   <a href="#tkinter.constants">tkinter.constants</a>
  &#8226;   <a href="#tkinter.filedialog">tkinter.filedialog</a>
  &#8226;   <a href="#tkinter.messagebox">tkinter.messagebox</a>
@@ -10254,6 +10326,7 @@ imported by:
  &#8226;   <a href="#sprite_animation_studio.ui_settings">sprite_animation_studio.ui_settings</a>
  &#8226;   <a href="#sprite_animation_studio.ui_spritesheet">sprite_animation_studio.ui_spritesheet</a>
  &#8226;   <a href="#sprite_animation_studio.ui_welcome">sprite_animation_studio.ui_welcome</a>
+ &#8226;   <a href="#tkinter.colorchooser">tkinter.colorchooser</a>
  &#8226;   <a href="#tkinter.commondialog">tkinter.commondialog</a>
  &#8226;   <a href="#tkinter.constants">tkinter.constants</a>
  &#8226;   <a href="#tkinter.dialog">tkinter.dialog</a>
@@ -10261,6 +10334,24 @@ imported by:
  &#8226;   <a href="#tkinter.messagebox">tkinter.messagebox</a>
  &#8226;   <a href="#tkinter.simpledialog">tkinter.simpledialog</a>
  &#8226;   <a href="#tkinter.ttk">tkinter.ttk</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="tkinter.colorchooser"></a>
+  <a target="code" href="///C:/Program%20Files/WindowsApps/PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0/Lib/tkinter/colorchooser.py" type="text/plain"><tt>tkinter.colorchooser</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#tkinter">tkinter</a>
+ &#8226;   <a href="#tkinter.commondialog">tkinter.commondialog</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#sprite_animation_studio.ui_main">sprite_animation_studio.ui_main</a>
+ &#8226;   <a href="#tkinter">tkinter</a>
 
   </div>
 
@@ -10276,7 +10367,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#tkinter.filedialog">tkinter.filedialog</a>
+    <a href="#tkinter.colorchooser">tkinter.colorchooser</a>
+ &#8226;   <a href="#tkinter.filedialog">tkinter.filedialog</a>
  &#8226;   <a href="#tkinter.messagebox">tkinter.messagebox</a>
 
   </div>
@@ -10624,6 +10716,8 @@ imported by:
  &#8226;   <a href="#importlib.resources._common">importlib.resources._common</a>
  &#8226;   <a href="#importlib.resources._legacy">importlib.resources._legacy</a>
  &#8226;   <a href="#importlib.resources.abc">importlib.resources.abc</a>
+ &#8226;   <a href="#sprite_animation_studio.blender_bridge">sprite_animation_studio.blender_bridge</a>
+ &#8226;   <a href="#sprite_animation_studio.blender_import">sprite_animation_studio.blender_import</a>
  &#8226;   <a href="#sprite_animation_studio.models">sprite_animation_studio.models</a>
  &#8226;   <a href="#sprite_animation_studio.project_manager">sprite_animation_studio.project_manager</a>
  &#8226;   <a href="#sprite_animation_studio.timeline">sprite_animation_studio.timeline</a>

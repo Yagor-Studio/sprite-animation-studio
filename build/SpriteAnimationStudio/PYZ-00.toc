@@ -1,5 +1,4 @@
-('M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
- 'Studio\\v0.6v0.6.5\\github\\build\\SpriteAnimationStudio\\PYZ-00.pyz',
+('C:\\Dev\\sprite-animation-studio\\build\\SpriteAnimationStudio\\PYZ-00.pyz',
  [('PIL',
    'C:\\Users\\Lenovo\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\PIL\\__init__.py',
    'PYMODULE'),
@@ -629,52 +628,49 @@
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\socket.py',
    'PYMODULE'),
   ('sprite_animation_studio',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\__init__.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\__init__.py',
+   'PYMODULE'),
+  ('sprite_animation_studio.blender_bridge',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\blender_bridge.py',
+   'PYMODULE'),
+  ('sprite_animation_studio.blender_import',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\blender_import.py',
    'PYMODULE'),
   ('sprite_animation_studio.constants',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\constants.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\constants.py',
+   'PYMODULE'),
+  ('sprite_animation_studio.history',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\history.py',
    'PYMODULE'),
   ('sprite_animation_studio.main',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\main.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\main.py',
    'PYMODULE'),
   ('sprite_animation_studio.models',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\models.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\models.py',
    'PYMODULE'),
   ('sprite_animation_studio.project_manager',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\project_manager.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\project_manager.py',
    'PYMODULE'),
   ('sprite_animation_studio.settings',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\settings.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\settings.py',
    'PYMODULE'),
   ('sprite_animation_studio.timeline',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\timeline.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\timeline.py',
    'PYMODULE'),
   ('sprite_animation_studio.ui_main',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\ui_main.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\ui_main.py',
    'PYMODULE'),
   ('sprite_animation_studio.ui_profile',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\ui_profile.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\ui_profile.py',
    'PYMODULE'),
   ('sprite_animation_studio.ui_settings',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\ui_settings.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\ui_settings.py',
    'PYMODULE'),
   ('sprite_animation_studio.ui_spritesheet',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\ui_spritesheet.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\ui_spritesheet.py',
    'PYMODULE'),
   ('sprite_animation_studio.ui_welcome',
-   'M:\\Archivio rete\\DOOM\\DOOM TestWeapons\\Sprite Animation '
-   'Studio\\v0.6v0.6.5\\github\\sprite_animation_studio\\ui_welcome.py',
+   'C:\\Dev\\sprite-animation-studio\\sprite_animation_studio\\ui_welcome.py',
    'PYMODULE'),
   ('ssl',
    'C:\\Program '
@@ -715,6 +711,10 @@
   ('tkinter',
    'C:\\Program '
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\tkinter\\__init__.py',
+   'PYMODULE'),
+  ('tkinter.colorchooser',
+   'C:\\Program '
+   'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\tkinter\\colorchooser.py',
    'PYMODULE'),
   ('tkinter.commondialog',
    'C:\\Program '

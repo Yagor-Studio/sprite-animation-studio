@@ -98,6 +98,14 @@ class SettingsWindow:
         ttk.Spinbox(row, from_=15, to=3600, width=6,
                     textvariable=self.autosave_sec_var).pack(side='left', padx=6)
 
+
+        row2 = ttk.Frame(editor_tab)
+        row2.pack(anchor='w', pady=4)
+        ttk.Label(row2, text="Profondità Undo (step):").pack(side='left')
+        self.history_depth_var = tk.IntVar(
+            value=int(self.settings.get("editor", "history_depth", 10)))
+        ttk.Spinbox(row2, from_=1, to=100, width=6,
+                    textvariable=self.history_depth_var).pack(side='left', padx=6)
         # --- Tab Shortcuts ---
         sc_tab = ttk.Frame(nb, padding=12)
         nb.add(sc_tab, text="Scorciatoie")
@@ -109,6 +117,9 @@ class SettingsWindow:
             "save_as": "Salva con nome",
             "open": "Apri progetto",
             "new": "Nuovo progetto",
+            "undo": "Annulla (Undo)",
+            "redo": "Ripeti (Redo)",
+            "save": "Salva progetto",
             "play": "Play",
             "pause": "Pausa",
             "stop": "Stop",
@@ -151,7 +162,15 @@ class SettingsWindow:
     def _save(self):
         self.settings.set("editor", "autosave_enabled", bool(self.autosave_var.get()))
         self.settings.set("editor", "autosave_interval_sec", int(self.autosave_sec_var.get()))
+        self.settings.set("editor", "history_depth", int(self.history_depth_var.get()))
         for key, var in self.shortcut_vars.items():
             self.settings.set("shortcuts", key, var.get())
+
+        # Avvisa MainWindow di ricaricare le impostazioni
+        try:
+            self.parent.event_generate('<<SettingsChanged>>', when='tail')
+        except Exception:
+            pass
+
         messagebox.showinfo("Impostazioni", "Salvate.")
         self.window.destroy()
