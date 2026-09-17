@@ -9,12 +9,18 @@ Scarica l'ultima versione eseguibile dalla [pagina delle Release](https://github
 
 ### Per sviluppatori (codice sorgente)
 ```bash
-git clone https://github.com/TUO_USERNAME/sprite-animation-studio.git
+git clone 
+https://github.com/Yagor-Studio/sprite-animation-studio.git
 cd sprite-animation-studio
+python -m sprite_animation_studio.main
+
+#in caso di problemi all'avvio prova ad installare pillow e tkinter manualmente oppure prova:
+
 pip install -r requirements.txt
 python -m sprite_animation_studio.main
 
 
+####
 Hei tonno, se hai problemi con il programma scrivimi.
  
 yagorstudio@gmail.com
