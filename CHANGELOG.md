@@ -23,6 +23,8 @@
 - Print di debug in `timeline.py`, `ui_profile.py`, `ui_settings.py`, `ui_main.py`
 - Codice morto (`load_frames`, `_go_to_welcome`)
 - Variabili inutilizzate in `__init__`
-
+### BLENDER ADDON sas_sprite_renderer.py 0.4.3 
+- Risolto conflitto di movimento tra telecamere e bersaglio in caso di animazione e visualizzazione  da un frame differente dal primo in timeline. (Nella 0.4.2 è necessario registrare i keyframe della telecamera in Blender o premere "render all" visualizzando sempre il primo keyframe della timeline in Blender)
 ### Note
 - Il comportamento di "eliminazione frame" resta non distruttivo: rimuove dal progetto, i PNG restano su disco. La pulizia file orfani arriverà in 0.8.1.
+- Sto lavorando per inserire un tasto che renda tutte le telecamere un unico blocco per facilitarne il movimento fuori dai parametri presenti nella versione 0.4.4 di sas_sprite_renderer.py 
