@@ -8,7 +8,7 @@
 bl_info = {
     "name": "SAS Sprite Renderer",
     "author": "Yagor Studio",
-    "version": (0, 4, 0),
+    "version": (0, 4, 3),
     "blender": (3, 6, 0),
     "location": "View3D > Sidebar > SAS",
     "description": "Render 8-camera sprites compatibili con Sprite Animation Studio",
@@ -201,6 +201,13 @@ class SAS_Settings(PropertyGroup):
 
 
     # --- Target / Camera ---
+    follow_target: BoolProperty(
+        name="Insegui target durante il render",
+        description="Se attivo, le camere si riallineano ad ogni frame "
+                    "per seguire il target. Utile per soggetti statici. "
+                    "Disattivare per animazioni con movimento visibile.",
+        default=False,
+    )
     target: PointerProperty(
         name="Target",
         type=bpy.types.Object,
@@ -415,7 +422,10 @@ class SAS_OT_render_all(Operator):
     def execute(self, context):
         s = context.scene.sas_settings
         scene = context.scene
-
+        # ---------- PREPARAZIONE BATCH ----------
+        if s.live_enabled:
+            bpy.ops.sas.live_stop()
+            self.report({'INFO'}, "Live Mode fermata per il render batch")
         # ---------- VALIDAZIONE ----------
         if not s.target:
             self.report({'ERROR'}, "Target non impostato")
@@ -458,8 +468,9 @@ class SAS_OT_render_all(Operator):
         sprite_code = get_initials(s.sprite_name) if s.sas_compatible else ""
         anim_code = get_initials(s.anim_name) if s.sas_compatible else ""
 
-        # ---------- SETUP TELECAMERE ----------
-        bpy.ops.sas.setup_cameras()
+        # ---------- SETUP TELECAMERE (solo se non esistono) ----------
+        if bpy.data.objects.get("SAS_Cam_1") is None:
+            bpy.ops.sas.setup_cameras()
 
         # ---------- SALVA STATO ----------
         prev_cam = scene.camera
@@ -500,6 +511,8 @@ class SAS_OT_render_all(Operator):
                     continue
 
                 scene.frame_set(frame_num)
+                if s.follow_target:
+                    _refresh_cameras(context)
 
                 frame_angles = []
                 for angle in angles:
@@ -793,6 +806,7 @@ class SAS_PT_camera(Panel):
         col.prop(s, "cam_shift_x")
         col.prop(s, "cam_shift_y")
         box.prop(s, "look_at_offset")
+        box.prop(s, "follow_target")
 
         # --- Obiettivo ---
         box = layout.box()
@@ -1066,10 +1080,11 @@ def render_live_frame():
         return
     if not s.target:
         return
-
     # Le camere devono esistere
     if bpy.data.objects.get("SAS_Cam_1") is None:
         return
+    if s.follow_target:
+        _refresh_cameras(bpy.context)
 
     try:
         out_dir = resolve_output_dir(s.output_dir)
@@ -1149,6 +1164,7 @@ def render_live_frame():
         s.live_quality, use_real_engine, s.live_eevee_samples
     )
     try:
+        # Riallinea le camere al target corrente prima di ogni batch di render
         for angle in angles:
             cam_name = "SAS_Cam_1" if angle == 0 else f"SAS_Cam_{angle}"
             cam = bpy.data.objects.get(cam_name)
