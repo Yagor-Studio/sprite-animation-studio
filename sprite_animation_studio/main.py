@@ -8,7 +8,29 @@ from .constants import APP_NAME, APP_VERSION
 from .ui_welcome import WelcomeScreen
 from .ui_main import MainWindow
 
+import sys
+import ctypes
 
+def _enable_dpi_awareness():
+    """Su Windows, dichiara che l'app gestisce il DPI nativamente.
+    Senza questo, Windows applica uno scaling bitmap che sfoca tutta la UI."""
+    if sys.platform != "win32":
+        return
+    try:
+        # Windows 10+ con awareness per-monitor v2
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(
+            ctypes.c_void_p(-4)   # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+        )
+    except (AttributeError, OSError):
+        try:
+            # Fallback: Windows 8.1+
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except (AttributeError, OSError):
+            try:
+                # Fallback: Vista+
+                ctypes.windll.user32.SetProcessDPIAware()
+            except (AttributeError, OSError):
+                pass
 def _report_callback_exception(self, exc, val, tb):
     traceback.print_exception(exc, val, tb)
     try:
@@ -21,6 +43,7 @@ tk.Tk.report_callback_exception = _report_callback_exception
 
 
 def main():
+    _enable_dpi_awareness()
     root = tk.Tk()
     root.title(f"{APP_NAME} v{APP_VERSION}")
     root.geometry("1600x1000")

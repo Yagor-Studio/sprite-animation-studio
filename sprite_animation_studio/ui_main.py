@@ -397,6 +397,32 @@ class MainWindow:
 
         WelcomeScreen(self.root, on_project_loaded)
 
+    def _apply_speed_to_all(self):
+        """Applica la durata corrente a TUTTI i frame dell'animazione."""
+        if not self.timeline.frames:
+            return
+        try:
+            speed = int(self.speed_spin.get())
+        except (ValueError, tk.TclError):
+            return
+        speed = max(1, min(10000, speed))
+
+        n = len(self.timeline.frames)
+        if not messagebox.askyesno(
+            "Applica a tutti",
+            f"Applicare la durata di {speed} ms a tutti i {n} frame "
+            f"dell'animazione?\n\n"
+            f"Le durate individuali dei frame verranno sovrascritte."
+        ):
+            return
+
+        self._snapshot_and_mark()
+        for i in range(n):
+            self.timeline.set_duration(i, speed)
+        self._update_display()
+        self.info_lbl.config(text=f"Durata {speed}ms applicata a {n} frame")
+
+
     # -----------------------------------------------------------------
     # BUILD CONTENT
     # -----------------------------------------------------------------
@@ -549,10 +575,29 @@ class MainWindow:
 
         thumb_container = ttk.Frame(timeline_frame)
         thumb_container.pack(fill='x', pady=2)
+
         self.thumb_canvas = tk.Canvas(thumb_container, bg='#1a1a1a', height=60,
                                       highlightthickness=0)
-        self.thumb_canvas.pack(fill='x', padx=2, pady=2)
+        self.thumb_canvas.pack(side='top', fill='x', padx=2, pady=(2, 0))
+
+        self.thumb_scrollbar = ttk.Scrollbar(
+            thumb_container, orient='horizontal',
+            command=self.thumb_canvas.xview
+        )
+        self.thumb_scrollbar.pack(side='bottom', fill='x', padx=2, pady=(0, 2))
+        self.thumb_canvas.configure(xscrollcommand=self.thumb_scrollbar.set)
+
         self.thumb_refs = []
+
+        # Rotellina del mouse → scroll orizzontale
+        self.thumb_canvas.bind(
+            '<MouseWheel>',
+            lambda e: self.thumb_canvas.xview_scroll(int(-e.delta / 120), "units")
+        )
+        self.thumb_canvas.bind(
+            '<Shift-MouseWheel>',
+            lambda e: self.thumb_canvas.xview_scroll(int(-e.delta / 120), "units")
+        )
 
         # ---- Player ----
         player_frame = ttk.Frame(timeline_frame)
@@ -571,6 +616,9 @@ class MainWindow:
         self.speed_spin.bind('<Return>', self._on_speed_change)
         self.speed_spin.bind('<FocusOut>', self._on_speed_change)
         self.speed_spin.configure(command=self._on_speed_change)
+        ttk.Button(player_frame, text="→ tutti",
+                   width=6,
+                   command=self._apply_speed_to_all).pack(side='left', padx=(3, 0))
         
         self.time_lbl = ttk.Label(player_frame, text="0s 0ms 0tick", foreground='#666')
         self.time_lbl.pack(side='right', padx=10)
@@ -958,15 +1006,35 @@ class MainWindow:
             return
         profile = self.project.profiles[p_idx]
 
-        if not self.resources_path or not Path(self.resources_path).exists():
+        # Priorità alla cartella associata alla libreria
+        folder = None
+        if profile.folder_path and Path(profile.folder_path).exists():
+            folder = profile.folder_path
+        elif self.resources_path and Path(self.resources_path).exists():
+            # Fallback: cartella Risorse corrente, ma con avviso se è diversa
+            if messagebox.askyesno(
+                "Cartella da scansionare",
+                f"La libreria '{profile.name}' non ha una cartella associata.\n\n"
+                f"Uso la cartella attualmente aperta in Risorse:\n"
+                f"{self.resources_path}\n\n"
+                f"Continuare?"
+            ):
+                folder = self.resources_path
+
+        if not folder:
             folder = filedialog.askdirectory(title="Seleziona la cartella per la libreria")
             if not folder:
                 return
+            profile.folder_path = folder
             self.resources_path = folder
             self.resources_path_var.set(folder)
             self._update_resources_from_path(folder)
+            # Salva l'associazione nel progetto
+            pm = ProjectManager()
+            pm.current_project = self.project
+            pm._save_project()
 
-        root = Path(self.resources_path)
+        root = Path(folder)
         padre = profile.code
         groups = {}
         valid_files = 0
@@ -1596,7 +1664,42 @@ class MainWindow:
                     self._update_display()
                     self.info_lbl.config(text=f"Animazione '{anim.name}' eliminata")
 
+    def _scroll_to_current_thumb(self):
+        """Assicura che il thumbnail del frame corrente sia visibile.
+        Scrolla solo se il frame è fuori dalla vista."""
+        if not hasattr(self, 'thumb_scrollbar'):
+            return
+        try:
+            self.thumb_canvas.update_idletasks()
+            region = self.thumb_canvas.cget('scrollregion')
+            if not region:
+                return
+            x0, _, x1, _ = [float(v) for v in region.split()]
+            total_w = x1 - x0
+            if total_w <= 0:
+                return
 
+            thumb_w, spacing = 48, 4
+            pos = self.current_frame_idx * (thumb_w + spacing) + 10
+            thumb_right = pos + thumb_w
+
+            # Area attualmente visibile, in coordinate canvas
+            view = self.thumb_canvas.xview()
+            view_left = view[0] * total_w
+            view_right = view[1] * total_w
+
+            # Se è già visibile, non scrollare
+            if view_left <= pos and thumb_right <= view_right:
+                return
+
+            # Altrimenti centra il frame nella vista
+            canvas_w = self.thumb_canvas.winfo_width()
+            target_left = pos - (canvas_w - thumb_w) // 2
+            target_left = max(0, min(target_left, total_w - canvas_w))
+            frac = target_left / total_w
+            self.thumb_canvas.xview_moveto(frac)
+        except Exception:
+            pass
 
     def _update_display(self):
         if not self.timeline.frames:
@@ -1611,6 +1714,7 @@ class MainWindow:
         self.time_lbl.config(text=f"{total_ms / 1000:.2f}s  {total_ms}ms  {self.timeline.get_total_ticks()}tick")
         self._draw_thumbnails()
         self._update_angle_dots()
+        self._scroll_to_current_thumb()
 
     def _sync_speed_spinbox(self):
         if self.timeline.frames:
@@ -1783,21 +1887,43 @@ class MainWindow:
                                           text=f"{frame_group.letter}",
                                           fill='#888888', font=('Segoe UI', 7, 'bold'))
 
-            if i == self.current_frame_idx:
-                self.thumb_canvas.create_rectangle(x - 3, y - 3, x + thumb_w + 3, y + thumb_h + 3,
-                                                   outline='#ff3333', width=2)
-                tri_x = x + thumb_w // 2
-                tri_y = y + thumb_h + 4
-                self.thumb_canvas.create_polygon(tri_x - 6, tri_y, tri_x + 6, tri_y,
-                                                 tri_x, tri_y + 8,
-                                                 fill='#ff3333', outline='')
-
             rect_id = self.thumb_canvas.create_rectangle(
                 x - 4, y - 4, x + thumb_w + 4, y + thumb_h + 20,
                 outline='', fill='', tags=(f'thumb_{i}',)
             )
             self.thumb_canvas.tag_bind(f'thumb_{i}', '<Button-1>',
                                        lambda e, idx=i: self._jump_to_frame(idx))
+        
+        self._update_current_thumb_indicator()
+            
+    def _update_current_thumb_indicator(self):
+        """Disegna o sposta il rettangolo rosso e il triangolino sul frame corrente.
+        Non ridisegna le thumbnail, aggiorna solo l'indicatore."""
+        self.thumb_canvas.delete('current_indicator')
+
+        if not self.timeline.frames:
+            return
+        idx = self.current_frame_idx
+        if idx < 0 or idx >= len(self.timeline.frames):
+            return
+
+        thumb_w, thumb_h = 48, 48
+        spacing = 4
+        x = idx * (thumb_w + spacing) + 10
+        y = 6
+
+        self.thumb_canvas.create_rectangle(
+            x - 3, y - 3, x + thumb_w + 3, y + thumb_h + 3,
+            outline='#ff3333', width=2, tags=('current_indicator',)
+        )
+        tri_x = x + thumb_w // 2
+        tri_y = y + thumb_h + 4
+        self.thumb_canvas.create_polygon(
+            tri_x - 6, tri_y, tri_x + 6, tri_y,
+            tri_x, tri_y + 8,
+            fill='#ff3333', outline='', tags=('current_indicator',)
+        )     
+
 
     def _jump_to_frame(self, idx):
         if 0 <= idx < len(self.timeline.frames):
@@ -1806,6 +1932,7 @@ class MainWindow:
             self.current_frame_idx = idx
             self._update_display()
             self._update_angle_dots()
+            self._scroll_to_current_thumb()
 
     def _play(self):
         if not self.timeline.frames:
@@ -1825,12 +1952,22 @@ class MainWindow:
         self._pause()
         self.current_frame_idx = 0
         self._show_frame(0)
+        self._update_current_thumb_indicator()
+        self._scroll_to_current_thumb()
 
     def _tick(self):
         if not self.is_playing or not self.timeline.frames:
             return
-        self._show_frame(self.current_frame_idx)
-        next_idx = self.current_frame_idx + 1
+
+        # Mostra il frame corrente
+        shown_idx = self.current_frame_idx
+        self._show_frame(shown_idx)
+        self._scroll_to_current_thumb()
+        self._update_current_thumb_indicator()
+        dur = self.timeline.get_frame_duration(shown_idx)
+
+        # Avanza
+        next_idx = shown_idx + 1
         if next_idx >= len(self.timeline.frames):
             if self.loop_var.get():
                 next_idx = 0
@@ -1838,7 +1975,7 @@ class MainWindow:
                 self.is_playing = False
                 return
         self.current_frame_idx = next_idx
-        dur = self.timeline.get_frame_duration(self.current_frame_idx)
+
         self._after_id = self.root.after(dur, self._tick)
 
     def _on_speed_change(self, event=None):
@@ -1846,16 +1983,31 @@ class MainWindow:
             speed = int(self.speed_spin.get())
         except (ValueError, tk.TclError):
             return
-        self.speed_var.set(speed)
-        if self.timeline.frames:
-            for i in range(len(self.timeline.frames)):
-                self.timeline.set_duration(i, speed)
-            self._update_display()
-    
+
+        if not self.timeline.frames:
+            return
+
+        # Se esiste un target dal debounce, usa quello; altrimenti frame corrente
+        target_idx = getattr(self, '_speed_target_idx', self.current_frame_idx)
+        # ... clamp a range valido
+        if target_idx < 0 or target_idx >= len(self.timeline.frames):
+            target_idx = self.current_frame_idx
+
+        current = self.timeline.get_frame_duration(target_idx)
+        if speed == current:
+            return
+
+        speed = max(1, min(10000, speed))
+        self._snapshot_and_mark()
+        self.timeline.set_duration(target_idx, speed)
+        self._update_display()
+
     def _on_speed_change_debounced(self, event=None):
         if hasattr(self, '_speed_debounce_id') and self._speed_debounce_id:
             self.root.after_cancel(self._speed_debounce_id)
-        self._speed_debounce_id = self.root.after(500, self._on_speed_change)
+        # Ricorda il frame su cui l'utente sta agendo ADESSO
+        self._speed_target_idx = self.current_frame_idx
+        self._speed_debounce_id = self.root.after(700, self._on_speed_change)
 
     def _save_project(self):
         pm = ProjectManager()
@@ -1892,21 +2044,24 @@ class MainWindow:
             pm = ProjectManager()
             pm.current_project = self.project
             pm._save_project()
+            pm.add_recent(path)
             self._last_save_time = time.time()
-            self.root.title(f"{APP_NAME} v{APP_VERSION} - {self.project.name}")
+            self._dirty = False
+            self._update_title()
             return
 
         # --- Caso 2: cartella diversa → verifica se ci sono percorsi relativi ---
         relative_count = self._count_relative_assets()
         if relative_count == 0:
-            # Nessun file relativo: il salvataggio è sicuro, procedi diretto
             self.project.root_path = new_root
             self.project.name = path.stem
             pm = ProjectManager()
             pm.current_project = self.project
             pm._save_project()
+            pm.add_recent(path)
             self._last_save_time = time.time()
-            self.root.title(f"{APP_NAME} v{APP_VERSION} - {self.project.name}")
+            self._dirty = False
+            self._update_title()
             return
 
         # --- Dialog a 3 scelte ---
@@ -1938,8 +2093,10 @@ class MainWindow:
         pm = ProjectManager()
         pm.current_project = self.project
         pm._save_project()
+        pm.add_recent(path)
         self._last_save_time = time.time()
-        self.root.title(f"{APP_NAME} v{APP_VERSION} - {self.project.name}")
+        self._dirty = False
+        self._update_title()
 
     def _count_relative_assets(self):
         """Conta quanti AngleData hanno un percorso relativo non vuoto."""
@@ -2222,7 +2379,6 @@ class MainWindow:
         pm.current_project = self.project
         pm._save_project()
 
-        # --- FULL: comportamento classico ---
         self._refresh_tree()
         self._check_profiles()
         was_loaded = (self._loaded_anim_ref == (profile.code, anim.code))

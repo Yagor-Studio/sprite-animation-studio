@@ -11,7 +11,7 @@ except ImportError:
     ImageTk = None
 
 from .constants import APP_NAME, APP_VERSION, PROJECT_EXTENSION
-from .project_manager import ProjectManager
+from .project_manager import ProjectManager, ProjectAlreadyExists
 
 class NewProjectWindow:
     def __init__(self, parent, on_complete):
@@ -106,6 +106,75 @@ class NewProjectWindow:
         if path:
             self.project_path.set(path)
 
+    def _ask_existing_project_action(self, sas_path):
+        """Dialog a 3 scelte per gestire un progetto già esistente.
+        Ritorna: 'open' | 'overwrite' | None (annulla).
+        """
+        win = tk.Toplevel(self.window)
+        win.title("Progetto già esistente")
+        win.geometry("580x330")
+        win.configure(bg='#2b2b2b')
+        win.transient(self.window)
+        win.grab_set()
+        win.resizable(False, False)
+        win.focus_force()
+
+        # Centra rispetto alla finestra principale
+        self.window.update_idletasks()
+        px = self.window.winfo_x() + (self.window.winfo_width() - 580) // 2
+        py = self.window.winfo_y() + (self.window.winfo_height() - 330) // 2
+        win.geometry(f"+{px}+{py}")
+
+        tk.Label(win, text="Esiste già un progetto con questo nome",
+                 font=('Segoe UI', 14, 'bold'),
+                 bg='#2b2b2b', fg='#ffffff').pack(pady=(20, 10))
+
+        text = (
+            f"{sas_path}\n\n"
+            f"Cosa vuoi fare?"
+        )
+        tk.Label(win, text=text, font=('Segoe UI', 9),
+                 bg='#2b2b2b', fg='#aaaaaa',
+                 justify='center', wraplength=520).pack(padx=30)
+
+        result = {'value': None}
+
+        def choose(mode):
+            result['value'] = mode
+            win.grab_release()
+            win.destroy()
+
+        btn_frame = tk.Frame(win, bg='#2b2b2b')
+        btn_frame.pack(pady=25)
+
+        tk.Button(btn_frame, text="Apri il progetto esistente",
+                  font=('Segoe UI', 10, 'bold'),
+                  bg='#4a9eff', fg='white', relief='flat',
+                  padx=18, pady=10,
+                  command=lambda: choose("open")).pack(side='left', padx=6)
+
+        tk.Button(btn_frame, text="Crea nuovo (sovrascrive)",
+                  font=('Segoe UI', 10),
+                  bg='#555555', fg='white', relief='flat',
+                  padx=18, pady=10,
+                  command=lambda: choose("overwrite")).pack(side='left', padx=6)
+
+        tk.Button(btn_frame, text="Annulla",
+                  font=('Segoe UI', 10),
+                  bg='#555555', fg='white', relief='flat',
+                  padx=18, pady=10,
+                  command=lambda: choose(None)).pack(side='left', padx=6)
+
+        hint = ("Sovrascrivendo, il progetto attuale verrà copiato in "
+                ".sas.bak prima di essere sostituito.\n"
+                "I PNG degli sprite restano intatti sul disco.")
+        tk.Label(win, text=hint, font=('Segoe UI', 8),
+                 bg='#2b2b2b', fg='#888888',
+                 justify='center').pack(padx=30, pady=(0, 10))
+
+        self.window.wait_window(win)
+        return result['value']
+
     def _create_project(self):
         name = self.project_name.get().strip()
         path = self.project_path.get().strip()
@@ -123,9 +192,33 @@ class NewProjectWindow:
             return
 
         mode = self.mode_var.get()
-
         pm = ProjectManager()
-        project = pm.create_project(root_path, name, mode)
+
+        try:
+            project = pm.create_project(root_path, name, mode)
+        except ProjectAlreadyExists as e:
+            choice = self._ask_existing_project_action(e.path)
+            if choice is None:
+                # Annulla: torna alla finestra senza fare nulla
+                return
+            if choice == "open":
+                project = pm.load_project(e.path)
+                if project is None:
+                    messagebox.showerror(
+                        "Errore",
+                        "Impossibile aprire il progetto esistente.\n"
+                        "Il file potrebbe essere danneggiato."
+                    )
+                    return
+            elif choice == "overwrite":
+                try:
+                    project = pm.create_project(root_path, name, mode, force=True)
+                except Exception as ex:
+                    messagebox.showerror(
+                        "Errore",
+                        f"Impossibile creare il progetto:\n{ex}"
+                    )
+                    return
 
         self.window.grab_release()
         self.window.destroy()
@@ -227,7 +320,7 @@ class WelcomeScreen:
         close_btn = tk.Button(self.window, text="✕", font=('Segoe UI', 10, 'bold'),
                               bg='#2b2b2b', fg='#888888', relief='flat', padx=8, pady=2,
                               command=self._close_app)
-        close_btn.place(x=930, y=8)
+        close_btn.place(relx=1.0, x=-8, y=8, anchor='ne')
 
     def _draw_gradient(self, parent):
         canvas = tk.Canvas(parent, bg='#3a3a3a', highlightthickness=0)

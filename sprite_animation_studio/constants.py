@@ -2,7 +2,7 @@
 from pathlib import Path
 
 APP_NAME = "Sprite Animation Studio"
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.8.2"
 PROJECT_EXTENSION = ".sas"
 IMG_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
 DEFAULT_DURATION_MS = 112   # 4 tic a 35 Hz
