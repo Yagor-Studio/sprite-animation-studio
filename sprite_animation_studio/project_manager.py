@@ -1,4 +1,4 @@
-# sprite_studio/project_manager.py
+# sprite_animation_studio/project_manager.py
 import json
 import shutil
 from pathlib import Path

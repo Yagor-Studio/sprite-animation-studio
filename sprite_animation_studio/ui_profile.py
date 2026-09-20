@@ -1,4 +1,4 @@
-# sprite_studio/ui_profile.py
+# sprite_animation_studio/ui_profile.py
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path

@@ -90,6 +90,7 @@ def _refresh_cameras(context):
         cam = bpy.data.objects.get(f"SAS_Cam_{angle_num}")
         if cam is None:
             continue
+
         cam.location = camera_position(angle_num, s.cam_distance, s.cam_height, ring_center)
         point_at(cam, aim_point)
 

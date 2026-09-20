@@ -1,4 +1,4 @@
-# sprite_studio/ui_main.py
+# sprite_animation_studio/ui_main.py
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from pathlib import Path
@@ -11,7 +11,7 @@ from .constants import APP_NAME, APP_VERSION, DEFAULT_DURATION_MS, PROJECT_EXTEN
 from .models import AnimationData, FrameGroup, AngleData, ProfileData
 from .timeline import TimelineModel
 from .project_manager import ProjectManager
-
+from .logger import log
 from .ui_profile import CreateProfileDialog
 from .ui_welcome import WelcomeScreen
 from .settings import Settings
@@ -105,7 +105,9 @@ class MainWindow:
         self.tree_item_map = {}
         self._closed = False
 
+        self._keypress_bind_id = None
         self._bridge = None
+        self._sheet_window = None
         self._loaded_anim_ref = None   # (profile_code, anim_code) attualmente in timeline
         self._dirty = False
 
@@ -183,6 +185,13 @@ class MainWindow:
             except Exception:
                 pass
             self._bridge = None
+        # Rimuove il dispatcher globale delle scorciatoie
+        if self._keypress_bind_id is not None:
+            try:
+                self.root.unbind("<KeyPress>", self._keypress_bind_id)
+            except Exception:
+                pass
+            self._keypress_bind_id = None
 
         # Cancella i timer pendenti
         for attr in ('_status_tick_id', '_after_autosave', '_after_id'):
@@ -241,6 +250,9 @@ class MainWindow:
         menubar.add_cascade(label="Strumenti", menu=tools_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="Apri cartella log",
+                              command=self._open_log_folder)
+        help_menu.add_separator()
         help_menu.add_command(label="Informazioni", command=self._show_about)
         menubar.add_cascade(label="Aiuto", menu=help_menu)
 
@@ -371,13 +383,13 @@ class MainWindow:
             except Exception:
                 pass
             self._after_autosave = None
-        # Rimuove le scorciatoie attaccate alla root
-        for combo in self.settings.get("shortcuts").values():
-            if combo:
-                try:
-                    self.root.unbind_all(combo)
-                except tk.TclError:
-                    pass
+        # Rimuove il dispatcher globale delle scorciatoie
+        if self._keypress_bind_id is not None:
+            try:
+                self.root.unbind("<KeyPress>", self._keypress_bind_id)
+            except Exception:
+                pass
+            self._keypress_bind_id = None
  
         self.timeline.clear()
 
@@ -398,7 +410,7 @@ class MainWindow:
         WelcomeScreen(self.root, on_project_loaded)
 
     def _apply_speed_to_all(self):
-        """Applica la durata corrente a TUTTI i frame dell'animazione."""
+        """Applica la durata corrente a TUTTI i frame (timeline + project model)."""
         if not self.timeline.frames:
             return
         try:
@@ -417,8 +429,19 @@ class MainWindow:
             return
 
         self._snapshot_and_mark()
+
+        # 1. Timeline
         for i in range(n):
             self.timeline.set_duration(i, speed)
+
+        # 2. Project model
+        _, anim = self._get_current_anim()
+        if anim:
+            for i in range(min(n, len(anim.frames))):
+                anim.frames[i].duration_ms = speed
+                for angle_data in anim.frames[i].angles:
+                    angle_data.duration_ms = speed
+
         self._update_display()
         self.info_lbl.config(text=f"Durata {speed}ms applicata a {n} frame")
 
@@ -728,11 +751,12 @@ class MainWindow:
         dest_path = dest_dir / new_name
 
         try:
-            img = Image.open(src_path).convert("RGBA")
+            with Image.open(src_path) as src:
+                img = src.convert("RGBA")
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
             img.save(dest_path, "PNG")
         except Exception as e:
-            print(f"Errore creando specchio: {e}")
+            log.error(f"Errore creando specchio: {e}", exc_info=True)
             return None
 
         try:
@@ -1275,20 +1299,27 @@ class MainWindow:
         label = tk.Label(center, text="Crea la tua prima libreria", font=('Segoe UI', 14),
                          bg='#2b2b2b', fg='#ffffff')
         label.pack()
-        self._set_controls_state('disabled')
 
     def _hide_empty_overlay(self):
         if hasattr(self, 'empty_overlay') and self.empty_overlay:
             self.empty_overlay.destroy()
             self.empty_overlay = None
-        self._set_controls_state('normal')
 
     def _bind_shortcuts(self):
-        """Registra un unico dispatcher che smista in base alla combinazione premuta."""
-        s = self.settings.get("shortcuts")
-        
-        # Nessun unbind_all: registriamo una sola volta un gestore universale
-        self.root.bind_all("<KeyPress>", self._on_any_key, add="+")
+        """Registra un unico dispatcher globale per le scorciatoie.
+        Rimuove quello precedente se esiste, per evitare accumulo."""
+        # Rimuovi il binding precedente, se c'è
+        if self._keypress_bind_id is not None:
+            try:
+                self.root.unbind("<KeyPress>", self._keypress_bind_id)
+            except Exception:
+                pass
+            self._keypress_bind_id = None
+
+        # Registra il nuovo dispatcher e salva il funcid
+        self._keypress_bind_id = self.root.bind(
+            "<KeyPress>", self._on_any_key, add="+"
+        )
 
     def _on_any_key(self, event):
         """Confronta la combinazione premuta con quelle configurate."""
@@ -1406,20 +1437,6 @@ class MainWindow:
             return
         self._status_tick_id = self.root.after(500, self._update_save_status_tick)
 
-    def _set_controls_state(self, state):
-        if hasattr(self, 'code_entry'):
-            self.code_entry.config(state=state)
-        for child in self.main_frame.winfo_children():
-            if isinstance(child, (ttk.Button, tk.Button)):
-                try:
-                    child.config(state=state)
-                except Exception:
-                    pass
-            elif isinstance(child, (ttk.Entry, tk.Entry)):
-                try:
-                    child.config(state=state)
-                except Exception:
-                    pass
 
     def _create_first_profile(self):
         def on_profile_created(profile):
@@ -1778,7 +1795,8 @@ class MainWindow:
 
         elif mode == "image" and img_path and Path(img_path).exists():
             try:
-                src = Image.open(img_path).convert("RGBA")
+                with Image.open(img_path) as src_file:
+                    src = src_file.convert("RGBA")
             except Exception:
                 bg = Image.new("RGBA", (w, h), "#222222")
             else:
@@ -1979,6 +1997,7 @@ class MainWindow:
         self._after_id = self.root.after(dur, self._tick)
 
     def _on_speed_change(self, event=None):
+        """Applica la durata al frame CORRENTE (timeline + project model)."""
         try:
             speed = int(self.speed_spin.get())
         except (ValueError, tk.TclError):
@@ -1987,10 +2006,8 @@ class MainWindow:
         if not self.timeline.frames:
             return
 
-        # Se esiste un target dal debounce, usa quello; altrimenti frame corrente
         target_idx = getattr(self, '_speed_target_idx', self.current_frame_idx)
-        # ... clamp a range valido
-        if target_idx < 0 or target_idx >= len(self.timeline.frames):
+        if target_idx is None or target_idx < 0 or target_idx >= len(self.timeline.frames):
             target_idx = self.current_frame_idx
 
         current = self.timeline.get_frame_duration(target_idx)
@@ -1998,8 +2015,20 @@ class MainWindow:
             return
 
         speed = max(1, min(10000, speed))
+
         self._snapshot_and_mark()
+
+        # 1. Aggiorna la timeline (per la UI)
         self.timeline.set_duration(target_idx, speed)
+
+        # 2. Aggiorna il project model (per il salvataggio)
+        _, anim = self._get_current_anim()
+        if anim and target_idx < len(anim.frames):
+            anim.frames[target_idx].duration_ms = speed
+            for angle_data in anim.frames[target_idx].angles:
+                angle_data.duration_ms = speed
+
+        self._speed_target_idx = None
         self._update_display()
 
     def _on_speed_change_debounced(self, event=None):
@@ -2105,6 +2134,20 @@ class MainWindow:
             if ad.file and not Path(ad.file).is_absolute():
                 count += 1
         return count
+
+    def _get_current_anim(self):
+        """Ritorna (profile, anim) dell'animazione attualmente caricata,
+        o (None, None) se nessuna è caricata."""
+        if not self._loaded_anim_ref:
+            return None, None
+        profile_code, anim_code = self._loaded_anim_ref
+        for profile in self.project.profiles:
+            if profile.code != profile_code:
+                continue
+            for anim in profile.animations:
+                if anim.code == anim_code:
+                    return profile, anim
+        return None, None
 
     def _iter_all_angles(self):
         """Generatore: itera su tutti gli AngleData del progetto."""
@@ -2226,6 +2269,10 @@ class MainWindow:
                 p = old_root / p
             ad.file = str(p)
 
+    def _open_log_folder(self):
+        from .logger import open_log_folder
+        open_log_folder()
+
     def _show_about(self):
         messagebox.showinfo("Informazioni", f"{APP_NAME} v{APP_VERSION}\n\nLettore 2.5D con supporto angoli 1-8\nSpritesheet integrato\n© 2026 - Yagor Studio")
     # -----------------------------------------------------------------
@@ -2294,7 +2341,21 @@ class MainWindow:
         
     def _open_spritesheet_tool(self):
         from .ui_spritesheet import SpritesheetWindow
-        SpritesheetWindow(
+
+        # Se c'è già una finestra aperta, portala in primo piano
+        if self._sheet_window is not None:
+            try:
+                if self._sheet_window.window.winfo_exists():
+                    self._sheet_window.window.lift()
+                    self._sheet_window.window.focus_force()
+                    return
+            except Exception:
+                pass
+            # La finestra è stata chiusa: azzera il riferimento
+            self._sheet_window = None
+
+        # Altrimenti, crea una nuova finestra
+        self._sheet_window = SpritesheetWindow(
             self.root,
             project=self.project,
             on_import=self._on_spritesheet_import

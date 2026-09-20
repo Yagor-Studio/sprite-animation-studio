@@ -1,4 +1,4 @@
-# sprite_studio/blender_import.py
+# sprite_animation_studio/blender_import.py
 """Conversione manifest Blender -> modelli SAS.
 
 Riusa i modelli esistenti (ProjectData, ProfileData, AnimationData,

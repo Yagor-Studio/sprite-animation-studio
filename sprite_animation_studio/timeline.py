@@ -1,4 +1,4 @@
-# sprite_studio/timeline.py
+# sprite_animation_studio/timeline.py
 from pathlib import Path
 from typing import List, Optional
 from PIL import Image

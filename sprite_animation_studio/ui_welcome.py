@@ -1,4 +1,4 @@
-# sprite_studio/ui_welcome.py
+# sprite_animation_studio/ui_welcome.py
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
@@ -246,7 +246,12 @@ class WelcomeScreen:
         x = (screen_width - width) // 2
         y = (screen_height - height) // 2
         self.window.geometry(f"{width}x{height}+{x}+{y}")
-
+        try:
+            icon_path = self._get_resource_path("resources/icon.ico")
+            if icon_path.exists():
+                self.window.iconbitmap(str(icon_path))
+        except Exception:
+            pass
         self.window.focus_force()
         self.window.grab_set()
 

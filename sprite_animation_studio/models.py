@@ -1,4 +1,4 @@
-# sprite_studio/models.py
+# sprite_animation_studio/models.py
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Any

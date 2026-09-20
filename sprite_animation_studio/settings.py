@@ -1,4 +1,4 @@
-# sprite_studio/settings.py
+# sprite_animation_studio/settings.py
 import json
 from pathlib import Path
 from .constants import CONFIG_DIR
@@ -39,6 +39,17 @@ DEFAULTS = {
 }
 
 
+# Vincoli di validazione: chiave → (tipo, min, max)
+# Se il valore letto non rispetta il tipo o l'intervallo,
+# viene sostituito con il default.
+EDITOR_CONSTRAINTS = {
+    "autosave_enabled":    (bool, None, None),
+    "autosave_interval_sec": (int, 15, 3600),
+    "default_duration_ms": (int, 1, 10000),
+    "history_depth":       (int, 1, 100),
+}
+
+
 class Settings:
     def __init__(self):
         self.data = json.loads(json.dumps(DEFAULTS))
@@ -47,9 +58,10 @@ class Settings:
     def load(self):
         if SETTINGS_FILE.exists():
             try:
-                with open(SETTINGS_FILE) as f:
+                with open(SETTINGS_FILE, encoding="utf-8") as f:
                     saved = json.load(f)
                 self._merge(saved)
+                self._validate()
             except Exception as e:
                 print(f"Settings load error: {e}")
 
@@ -60,10 +72,36 @@ class Settings:
             else:
                 self.data[section] = values
 
+    def _validate(self):
+        """Corregge valori fuori range o di tipo sbagliato, riportandoli ai default."""
+        editor = self.data.get("editor", {})
+        defaults = DEFAULTS["editor"]
+
+        for key, (typ, vmin, vmax) in EDITOR_CONSTRAINTS.items():
+            value = editor.get(key)
+            # Tipo sbagliato?
+            if not isinstance(value, typ):
+                # Prova a convertire, se possibile
+                try:
+                    if typ is int:
+                        value = int(value)
+                    elif typ is bool:
+                        value = bool(value)
+                except (TypeError, ValueError):
+                    editor[key] = defaults[key]
+                    continue
+            # Fuori intervallo?
+            if vmin is not None and value < vmin:
+                editor[key] = vmin
+            elif vmax is not None and value > vmax:
+                editor[key] = vmax
+
+        self.data["editor"] = editor
+
     def save(self):
         try:
-            with open(SETTINGS_FILE, 'w') as f:
-                json.dump(self.data, f, indent=2)
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"Settings save error: {e}")
 

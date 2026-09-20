@@ -1,4 +1,4 @@
-# sprite_studio/ui_spritesheet.py
+# sprite_animation_studio/ui_spritesheet.py
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
@@ -599,16 +599,23 @@ class SpritesheetWindow:
             messagebox.showwarning("Attenzione", "La lettera iniziale deve essere A-Z.")
             return
 
+        nf = max(1, self._safe_int(self.num_frames_var, 1))
+        max_nf = ord('Z') - ord(start_letter) + 1
+        if nf > max_nf:
+            messagebox.showwarning(
+                "Attenzione",
+                f"Con lettera iniziale '{start_letter}' puoi avere al massimo "
+                f"{max_nf} frame (da {start_letter} a Z).\n\n"
+                f"Ne hai impostati {nf}."
+            )
+            return
+
         start_angle = self._safe_int(self.start_angle_var, 1)
         if start_angle < 0 or start_angle > 8:
             messagebox.showwarning("Attenzione", "L'angolo iniziale deve essere tra 0 e 8.")
             return
 
-        nf = max(1, self._safe_int(self.num_frames_var, 1))
         na = max(1, self._safe_int(self.num_angles_var, 1))
-        if nf > 26:
-            messagebox.showwarning("Attenzione", "Massimo 26 frame (una lettera per A-Z).")
-            return
 
         max_angle = start_angle + (na - 1)
         if max_angle > 8:

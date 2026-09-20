@@ -1,4 +1,4 @@
-# sprite_studio/ui_settings.py
+# sprite_animation_studio/ui_settings.py
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -27,12 +27,17 @@ class ShortcutCaptureDialog(tk.Toplevel):
                                 font=('Consolas', 14, 'bold'),
                                 bg='#2b2b2b', fg='#4a9eff')
         self.preview.pack(pady=10)
-
+        self._confirm_id = None
         self.bind('<KeyPress>', self._on_key)
         self.focus_force()
 
     def _on_key(self, event):
         # Ignora solo i modificatori
+        if event.keysym == "Escape":
+            self._cancel()
+            return
+
+        # Ignora i modificatori isolati
         if event.keysym in ("Shift_L", "Shift_R", "Control_L", "Control_R",
                             "Alt_L", "Alt_R", "Meta_L", "Meta_R"):
             return
@@ -54,11 +59,37 @@ class ShortcutCaptureDialog(tk.Toplevel):
 
         self.result = combo
         self.preview.config(text=combo)
-        self.after(250, self._confirm)
+        self._confirm_id = self.after(250, self._confirm)
+        ttk.Button(self, text="Annulla",
+                   command=self._cancel).pack(pady=(0, 12))
 
     def _confirm(self):
-        self.grab_release()
-        self.destroy()
+        self._confirm_id = None
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+    def _cancel(self):
+        # Se c'è un confirm in coda, cancellalo
+        if self._confirm_id is not None:
+            try:
+                self.after_cancel(self._confirm_id)
+            except Exception:
+                pass
+            self._confirm_id = None
+        self.result = None
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
 
 
 class SettingsWindow:
@@ -119,7 +150,6 @@ class SettingsWindow:
             "new": "Nuovo progetto",
             "undo": "Annulla (Undo)",
             "redo": "Ripeti (Redo)",
-            "save": "Salva progetto",
             "play": "Play",
             "pause": "Pausa",
             "stop": "Stop",

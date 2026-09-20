@@ -1,4 +1,4 @@
-# sprite_studio/sprite_utils.py
+# sprite_animation_studio/sprite_utils.py
 import re
 from pathlib import Path
 from PIL import Image
