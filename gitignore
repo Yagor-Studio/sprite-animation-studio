@@ -5,6 +5,10 @@ __pycache__/
 .venv/
 venv/
 
+# PyTest
+.pytest_cache/
+*.pyc
+
 # PyInstaller
 build/
 dist/

@@ -5,6 +5,7 @@ from PIL import Image
 
 from .models import AnimationData, FrameGroup, AngleData
 from .constants import DEFAULT_DURATION_MS, TICK_MS
+from .logger import log
 
 class TimelineModel:
     def __init__(self):
@@ -55,7 +56,7 @@ class TimelineModel:
                             img = img.transpose(Image.FLIP_LEFT_RIGHT)
                         angle_data.image = img
                     except Exception as e:
-                        print(f"[timeline] reload fallito {angle_data.file}: {e}")
+                        log.warning(f"Reload fallito {angle_data.file}: {e}")
                         angle_data.image = None
                     break
 

@@ -12,6 +12,81 @@ except ImportError:
 
 from .constants import APP_NAME, APP_VERSION, PROJECT_EXTENSION
 from .project_manager import ProjectManager, ProjectAlreadyExists
+from .logger import log, open_log_folder
+
+
+def ask_load_backup_dialog(parent, corrupt_path: Path,
+                           backup_path: Path, backup_date: str) -> str:
+    """Finestra modale. Ritorna 'load_backup' o 'abort'."""
+    win = tk.Toplevel(parent)
+    win.title("Progetto corrotto")
+    win.geometry("600x380")
+    win.configure(bg='#2b2b2b')
+    win.transient(parent)
+    win.grab_set()
+    win.resizable(False, False)
+    win.focus_force()
+
+    # Centra rispetto alla finestra padre
+    parent.update_idletasks()
+    px = parent.winfo_x() + (parent.winfo_width() - 600) // 2
+    py = parent.winfo_y() + (parent.winfo_height() - 380) // 2
+    win.geometry(f"+{px}+{py}")
+
+    tk.Label(win, text="Progetto corrotto",
+             font=('Segoe UI', 14, 'bold'),
+             bg='#2b2b2b', fg='#ffffff').pack(pady=(20, 10))
+
+    text = (
+        f"Il file principale non è leggibile:\n"
+        f"{corrupt_path}\n\n"
+        f"È stato rinominato in:\n"
+        f"{corrupt_path}\n\n"
+        f"Il backup del {backup_date} è disponibile.\n\n"
+        f"Vuoi caricare il backup? Il file principale verrà ricostruito a\n"
+        f"partire dal backup, e il file corrotto resterà a parte."
+    )
+    tk.Label(win, text=text, font=('Segoe UI', 9),
+             bg='#2b2b2b', fg='#aaaaaa',
+             justify='center', wraplength=540).pack(padx=30)
+
+    # Chiusura con la X equivale ad Annulla
+    result = {'value': "abort"}
+
+    def choose(value):
+        result['value'] = value
+        win.grab_release()
+        win.destroy()
+
+    btn_frame = tk.Frame(win, bg='#2b2b2b')
+    btn_frame.pack(pady=25)
+
+    tk.Button(btn_frame, text="Carica il backup",
+              font=('Segoe UI', 10, 'bold'),
+              bg='#4a9eff', fg='white', relief='flat',
+              padx=18, pady=10,
+              command=lambda: choose("load_backup")).pack(side='left', padx=6)
+
+    tk.Button(btn_frame, text="Annulla",
+              font=('Segoe UI', 10),
+              bg='#555555', fg='white', relief='flat',
+              padx=18, pady=10,
+              command=lambda: choose("abort")).pack(side='left', padx=6)
+
+    # Apre la cartella dei log senza chiudere il dialog
+    tk.Button(btn_frame, text="Apri cartella log",
+              font=('Segoe UI', 10),
+              bg='#555555', fg='white', relief='flat',
+              padx=18, pady=10,
+              command=open_log_folder).pack(side='left', padx=6)
+
+    # Invio = pulsante di default, Esc = Annulla
+    win.bind('<Return>', lambda e: choose("load_backup"))
+    win.bind('<Escape>', lambda e: choose("abort"))
+
+    parent.wait_window(win)
+    return result['value']
+
 
 class NewProjectWindow:
     def __init__(self, parent, on_complete):
@@ -202,8 +277,21 @@ class NewProjectWindow:
                 # Annulla: torna alla finestra senza fare nulla
                 return
             if choice == "open":
-                project = pm.load_project(e.path)
+                # Traccia l'annullamento volontario del recupero backup, per
+                # non mostrare un errore quando l'utente ha solo premuto Annulla.
+                aborted = {"value": False}
+
+                def on_corrupt(c, b, d):
+                    result = ask_load_backup_dialog(self.window, c, b, d)
+                    if result != "load_backup":
+                        aborted["value"] = True
+                    return result
+
+                project = pm.load_project(e.path, on_corrupt=on_corrupt)
                 if project is None:
+                    if aborted["value"]:
+                        log.info(f"Apertura progetto esistente annullata dall'utente: {e.path.name}")
+                        return
                     messagebox.showerror(
                         "Errore",
                         "Impossibile aprire il progetto esistente.\n"
@@ -369,12 +457,40 @@ class WelcomeScreen:
             self._load_project(Path(file_path))
 
     def _load_project(self, path: Path):
-        project = self.project_manager.load_project(path)
+        # Traccia se l'utente ha annullato il dialog di recupero backup,
+        # per distinguere l'annullamento volontario da un fallimento vero.
+        aborted = {"value": False}
+
+        def on_corrupt(c, b, d):
+            result = ask_load_backup_dialog(self.window, c, b, d)
+            if result != "load_backup":
+                aborted["value"] = True
+            return result
+
+        project = self.project_manager.load_project(path, on_corrupt=on_corrupt)
         if project:
             self._close()
             self.on_project_loaded(project)
-        else:
-            messagebox.showerror("Errore", "Impossibile caricare il progetto.")
+            return
+
+        if aborted["value"]:
+            # Annullamento volontario: nessun errore, riporta la welcome in primo piano.
+            log.info(f"Caricamento progetto annullato dall'utente: {path.name}")
+            self.window.lift()
+            self.window.focus_force()
+            try:
+                self.window.grab_set()
+            except tk.TclError:
+                pass
+            return
+
+        messagebox.showerror("Errore", "Impossibile caricare il progetto.")
+        self.window.lift()
+        self.window.focus_force()
+        try:
+            self.window.grab_set()
+        except tk.TclError:
+            pass
 
     def _close(self):
         self.window.grab_release()

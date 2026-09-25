@@ -1,9 +1,10 @@
-# sprite_animation_studio/blender_bridge.py
+-o# sprite_animation_studio/blender_bridge.py
 import json
 from pathlib import Path
 from typing import Callable, Optional
 
 from .constants import MANIFEST_FILENAME, POLL_INTERVAL_MS
+from .logger import log
 
 
 class BlenderBridge:
@@ -57,7 +58,7 @@ class BlenderBridge:
             self._poll_once()
         except Exception as e:
             # Non uccidere il loop per un errore transitorio (file lock, ecc.)
-            print(f"[BlenderBridge] errore poll: {e}")
+            log.error(f"Errore poll bridge: {e}", exc_info=True)
         self._schedule()
 
     def _poll_once(self):
@@ -77,14 +78,14 @@ class BlenderBridge:
         try:
             raw = manifest_path.read_text(encoding="utf-8")
         except OSError as e:
-            print(f"[BlenderBridge] manifest illeggibile: {e}")
+            log.error(f"Manifest illeggibile: {e}", exc_info=True)
             return
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as e:
-            print(f"[BlenderBridge] manifest JSON invalido: {e}")
+            log.error(f"Manifest JSON invalido: {e}", exc_info=True)
             return
         try:
             self.on_update(data)
         except Exception as e:
-            print(f"[BlenderBridge] errore nella callback: {e}")
+            log.error(f"Errore nella callback bridge: {e}", exc_info=True)

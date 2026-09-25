@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 from .constants import CONFIG_DIR
+from .logger import log
 
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 
@@ -63,7 +64,7 @@ class Settings:
                 self._merge(saved)
                 self._validate()
             except Exception as e:
-                print(f"Settings load error: {e}")
+                log.error(f"Settings load error: {e}", exc_info=True)
 
     def _merge(self, saved):
         for section, values in saved.items():
@@ -103,7 +104,7 @@ class Settings:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"Settings save error: {e}")
+            log.error(f"Settings save error: {e}", exc_info=True)
 
     def get(self, section, key=None, default=None):
         if key is None:

@@ -4,6 +4,7 @@ from pathlib import Path
 from PIL import Image
 
 from .constants import DEFAULT_DURATION_MS, IMG_EXTENSIONS
+from .logger import log
 
 def build_pattern(prefix: str) -> re.Pattern:
     prefix_esc = re.escape(prefix)
@@ -21,7 +22,7 @@ def load_and_pad_images(paths, anchor='bottom'):
         try:
             imgs.append(Image.open(p).convert("RGBA"))
         except Exception as e:
-            print(f"Avviso: {p.name} -> {e}")
+            log.warning(f"Avviso: {p.name} -> {e}")
     if not imgs:
         return []
     max_w = max(i.width for i in imgs)

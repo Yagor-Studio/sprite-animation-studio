@@ -27,6 +27,12 @@ class ShortcutCaptureDialog(tk.Toplevel):
                                 font=('Consolas', 14, 'bold'),
                                 bg='#2b2b2b', fg='#4a9eff')
         self.preview.pack(pady=10)
+
+        btn_bar = ttk.Frame(self)
+        btn_bar.pack(pady=(0, 12))
+        ttk.Button(btn_bar, text="Annulla",
+                   command=self._cancel).pack(side='left', padx=4)
+
         self._confirm_id = None
         self.bind('<KeyPress>', self._on_key)
         self.focus_force()
@@ -45,7 +51,7 @@ class ShortcutCaptureDialog(tk.Toplevel):
         parts = []
         if event.state & 0x4:  parts.append("Control")
         if event.state & 0x1:  parts.append("Shift")
-        if event.state & 0x20000 or event.state & 0x8:
+        if event.state & 0x20000:
             parts.append("Alt")
 
         key = event.keysym
@@ -60,28 +66,17 @@ class ShortcutCaptureDialog(tk.Toplevel):
         self.result = combo
         self.preview.config(text=combo)
         self._confirm_id = self.after(250, self._confirm)
-        ttk.Button(self, text="Annulla",
-                   command=self._cancel).pack(pady=(0, 12))
 
-    def _confirm(self):
-        self._confirm_id = None
-        try:
-            self.grab_release()
-        except Exception:
-            pass
-        try:
-            self.destroy()
-        except Exception:
-            pass
-    def _cancel(self):
-        # Se c'è un confirm in coda, cancellalo
+    def _cancel_pending_confirm(self):
+        # Annulla il timer di auto-conferma, se in coda
         if self._confirm_id is not None:
             try:
                 self.after_cancel(self._confirm_id)
             except Exception:
                 pass
             self._confirm_id = None
-        self.result = None
+
+    def _close(self):
         try:
             self.grab_release()
         except Exception:
@@ -90,6 +85,15 @@ class ShortcutCaptureDialog(tk.Toplevel):
             self.destroy()
         except Exception:
             pass
+
+    def _confirm(self):
+        self._confirm_id = None
+        self._close()
+
+    def _cancel(self):
+        self._cancel_pending_confirm()
+        self.result = None
+        self._close()
 
 
 class SettingsWindow:
@@ -162,6 +166,9 @@ class SettingsWindow:
         grid = ttk.Frame(sc_tab)
         grid.pack(fill='both', expand=True)
 
+        self.shortcut_remove_buttons = {}
+        self._action_labels = action_labels
+
         for i, (key, label) in enumerate(action_labels.items()):
             ttk.Label(grid, text=label).grid(row=i, column=0, sticky='w', pady=3)
 
@@ -173,7 +180,16 @@ class SettingsWindow:
 
             ttk.Button(grid, text="Cambia…",
                        command=lambda k=key: self._change_shortcut(k)
-                       ).grid(row=i, column=2, padx=4)
+                       ).grid(row=i, column=2, padx=(4, 1))
+
+            remove_btn = ttk.Button(grid, text="🗑", width=2,
+                                     command=lambda k=key: self._remove_shortcut(k))
+            remove_btn.grid(row=i, column=3, padx=(1, 4))
+            self.shortcut_remove_buttons[key] = remove_btn
+            self._update_remove_button_state(key)
+
+            # Aggiorna lo stato del pulsante quando la scorciatoia cambia
+            var.trace_add('write', lambda *_args, k=key: self._update_remove_button_state(k))
 
         # --- Bottoni ---
         btn_bar = ttk.Frame(self.window)
@@ -186,8 +202,21 @@ class SettingsWindow:
         current = self.shortcut_vars[key].get()
         dlg = ShortcutCaptureDialog(self.window, current)
         self.window.wait_window(dlg)
-        if dlg.result:
+        if dlg.result is not None:
             self.shortcut_vars[key].set(dlg.result)
+
+    def _update_remove_button_state(self, key):
+        # Il pulsante 🗑 è attivo solo se la scorciatoia non è vuota
+        btn = self.shortcut_remove_buttons[key]
+        has_shortcut = bool(self.shortcut_vars[key].get())
+        btn.state(['!disabled'] if has_shortcut else ['disabled'])
+
+    def _remove_shortcut(self, key):
+        label = self._action_labels[key]
+        if messagebox.askyesno(
+                "Rimuovi scorciatoia",
+                f"Rimuovere la scorciatoia per '{label}'?"):
+            self.shortcut_vars[key].set("")
 
     def _save(self):
         self.settings.set("editor", "autosave_enabled", bool(self.autosave_var.get()))

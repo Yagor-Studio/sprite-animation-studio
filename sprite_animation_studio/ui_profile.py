@@ -59,9 +59,20 @@ class CreateProfileDialog:
 
         tk.Label(code_frame, text="Codice libreria (2 caratteri):", font=('Segoe UI', 11),
                  bg='#2b2b2b', fg='#cccccc').pack(anchor='w')
-        self.code_label = tk.Label(code_frame, text="", font=('Segoe UI', 14, 'bold'),
-                                   bg='#2b2b2b', fg='#4a9eff')
-        self.code_label.pack(anchor='w', pady=(3, 0))
+
+        code_row = tk.Frame(code_frame, bg='#2b2b2b')
+        code_row.pack(anchor='w', pady=(3, 0))
+
+        self.code_entry = tk.Entry(code_row, textvariable=self.profile_code,
+                                   font=('Segoe UI', 14, 'bold'),
+                                   bg='#3a3a3a', fg='#4a9eff', relief='flat',
+                                   insertbackground='white', width=4, justify='center')
+        self.code_entry.pack(side='left')
+        self.code_entry.bind('<KeyRelease>', self._on_code_change)
+
+        self.code_warning = tk.Label(code_row, text="", font=('Segoe UI', 9),
+                                     bg='#2b2b2b', fg='#ff5555')
+        self.code_warning.pack(side='left', padx=8)
 
         root_frame = tk.Frame(self.window, bg='#2b2b2b')
         root_frame.pack(fill='x', padx=40, pady=8)
@@ -104,18 +115,88 @@ class CreateProfileDialog:
         if name:
             words = name.split()
             if len(words) >= 2:
-                code = (words[0][0] + words[1][0]).upper()
+                base_code = (words[0][0] + words[1][0]).upper()
             else:
-                code = name[:2].upper()
-            if len(code) < 2:
-                code = code + "X"
-            self.profile_code.set(code)
-            self.code_label.config(text=code)
+                base_code = name[:2].upper()
+            if len(base_code) < 2:
+                base_code = base_code + "X"
+
+            # Proponi variante univoca se base_code è occupato
+            proposed = self._propose_unique_code(base_code)
+            self.profile_code.set(proposed)
+            self._update_code_warning()
+
             if self.root_path.get():
                 self._scan_folder()
         else:
             self.profile_code.set("")
-            self.code_label.config(text="")
+            self.code_warning.config(text="")
+
+    def _on_code_change(self, event=None):
+        """L'utente ha modificato il codice a mano."""
+        code = self.profile_code.get().strip().upper()
+        # Forza maiuscolo e lunghezza 2
+        if len(code) > 2:
+            code = code[:2]
+            self.profile_code.set(code)
+        elif code != self.profile_code.get():
+            self.profile_code.set(code)
+        self._update_code_warning()
+
+    def _propose_unique_code(self, base):
+        """Ritorna un codice di 2 caratteri non usato da altri profili."""
+        existing = {p.code.upper() for p in self.project.profiles}
+        base = base[:2].upper()
+        if base not in existing:
+            return base
+
+        # Prova varianti usando la seconda lettera della prima parola,
+        # poi la terza, poi numeri
+        name = self.profile_name.get().strip()
+        letters = [c for c in name.upper() if c.isalpha()]
+        first = base[0]
+
+        for c in letters:
+            candidate = (first + c)[:2]
+            if candidate not in existing:
+                return candidate
+
+        # Ultima spiaggia: aggiungi numero
+        for n in "0123456789":
+            candidate = (first + n)[:2]
+            if candidate not in existing:
+                return candidate
+
+        # Nessuna proposta disponibile (raro)
+        return base
+
+    def _update_code_warning(self):
+        """Mostra un avviso se il codice è già usato."""
+        code = self.profile_code.get().strip().upper()
+        if not code or len(code) < 2:
+            self.code_warning.config(text="")
+            self.create_btn.config(state='disabled')
+            return
+
+        existing = {p.code.upper() for p in self.project.profiles}
+        if code in existing:
+            self.code_warning.config(text="⚠ codice già usato")
+            self.create_btn.config(state='disabled')
+        else:
+            self.code_warning.config(text="✓")
+            # Riabilita se tutti i requisiti sono soddisfatti
+            self._refresh_create_button_state()
+
+    def _refresh_create_button_state(self):
+        """Abilita il pulsante Crea solo se tutti i requisiti sono soddisfatti."""
+        name = self.profile_name.get().strip()
+        code = self.profile_code.get().strip().upper()
+        existing = {p.code.upper() for p in self.project.profiles}
+
+        if not name or len(code) < 2 or code in existing:
+            self.create_btn.config(state='disabled')
+        else:
+            self.create_btn.config(state='normal')
 
     def _browse_root(self):
         path = filedialog.askdirectory(title="Seleziona la cartella root")
@@ -180,7 +261,7 @@ class CreateProfileDialog:
             self.preview_listbox.insert(tk.END, "Nessun file valido trovato (formato: SPRITE+ANIMAZIONE+FRAME+COORDINATA).")
             self.preview_listbox.insert(tk.END, "La libreria verrà creata vuota.")
             self._groups = {}
-            self.create_btn.config(state='normal')
+            self._refresh_create_button_state()
             return
 
         self.preview_listbox.insert(tk.END, f"Trovati {valid_files} file validi.")

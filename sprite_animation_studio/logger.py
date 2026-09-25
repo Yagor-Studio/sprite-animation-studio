@@ -18,19 +18,18 @@ from pathlib import Path
 
 from .constants import CONFIG_DIR
 
-LOG_FILE = CONFIG_DIR / "sprite_animation_studio.log"
-LOG_MAX_BYTES = 1_000_000       # 1 MB per file
-LOG_BACKUP_COUNT = 3            # 3 file storici + corrente
+LOG_FILE = CONFIG_DIR / "sprite_studio.log"
+LOG_MAX_BYTES = 1_000_000
+LOG_BACKUP_COUNT = 3
 
 _logger = None
 
 
 def _build_logger() -> logging.Logger:
-    logger = logging.getLogger("sprite_animation_studio")
+    logger = logging.getLogger("sprite_studio")
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
 
-    # File handler con rotazione
     try:
         file_handler = logging.handlers.RotatingFileHandler(
             LOG_FILE, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT,
@@ -44,17 +43,12 @@ def _build_logger() -> logging.Logger:
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
     except Exception as e:
-        # Se non riusciamo a scrivere il log, non blocchiamo l'app.
-        # Un messaggio su stderr avvisa chi ha lanciato da console.
-        print(f"[logger] impossibile creare {LOG_FILE}: {e}", file=sys.stderr)
+        sys.stderr.write(f"[logger] impossibile creare {LOG_FILE}: {e}\n")
 
-    # Console handler solo se stiamo girando da sorgente (non dall'.exe)
     if not getattr(sys, 'frozen', False):
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.DEBUG)
-        console_formatter = logging.Formatter(
-            "%(levelname)s: %(message)s"
-        )
+        console_formatter = logging.Formatter("%(levelname)s: %(message)s")
         console_handler.setFormatter(console_formatter)
         logger.addHandler(console_handler)
 
@@ -68,17 +62,14 @@ def get_logger() -> logging.Logger:
     return _logger
 
 
-# Alias comodo
 log = get_logger()
 
 
 def get_log_path() -> Path:
-    """Percorso del file di log corrente. Utile per il menu 'Apri cartella log'."""
     return LOG_FILE
 
 
 def open_log_folder():
-    """Apre la cartella che contiene il log nel file manager di sistema."""
     import subprocess
     import os
     folder = LOG_FILE.parent

@@ -6,8 +6,8 @@ from pathlib import Path
 from PIL import Image, ImageTk
 
 from .models import ProfileData, AnimationData, FrameGroup, AngleData
-from .project_manager import ProjectManager
 from .constants import DEFAULT_DURATION_MS
+from .logger import log
 
 class PlaceholderEntry(tk.Entry):
     """Entry con placeholder visivo, stile dark coerente con il resto dell'app.
@@ -74,9 +74,10 @@ class SpritesheetWindow:
     ORDER_ANGLE_FRAME = "ANGOLO→FRAME"
     ORDER_FRAME_ANGLE = "FRAME→ANGOLO"
 
-    def __init__(self, parent, project, on_import=None):
+    def __init__(self, parent, get_project, get_root_path, on_import=None):
         self.parent = parent
-        self.project = project
+        self.get_project = get_project
+        self.get_root_path = get_root_path
         self.on_import = on_import
 
         self.image = None
@@ -312,6 +313,26 @@ class SpritesheetWindow:
                     self.start_letter_var, self.start_angle_var):
             var.trace_add('write', lambda *a: self._render_canvas())
 
+        # Lettera iniziale: max 1 carattere A-Z (bug C-13).
+        # Registrato DOPO il trace di render: Tcl esegue i trace dal più
+        # recente, quindi la sanitizzazione avviene prima del render.
+        self.start_letter_var.trace_add('write', self._limit_start_letter)
+
+    def _limit_start_letter(self, *_):
+        """Limita la lettera iniziale a un solo carattere A-Z maiuscolo."""
+        value = self._safe_str(self.start_letter_var, "")
+        letters = [ch for ch in value.upper() if 'A' <= ch <= 'Z']
+        clean = letters[0] if letters else ""
+        if clean != value:
+            self.start_letter_var.set(clean)
+
+    def _valid_start_letter(self):
+        """Ritorna la lettera iniziale se è un singolo carattere A-Z, altrimenti None."""
+        sl = self._safe_str(self.start_letter_var, "A").strip().upper() or "A"
+        if len(sl) != 1 or not ('A' <= sl <= 'Z'):
+            return None
+        return sl
+
     # =================================================================
     # IMMAGINE
     # =================================================================
@@ -424,7 +445,9 @@ class SpritesheetWindow:
             frame_idx = relative_index % nf
             angle_idx = relative_index // nf
 
-        sl = (self._safe_str(self.start_letter_var, "A").strip().upper() or "A")
+        sl = self._valid_start_letter()
+        if sl is None:
+            return None
         sa = self._safe_int(self.start_angle_var, 1)
         return chr(ord(sl) + frame_idx), sa + angle_idx
 
@@ -512,7 +535,10 @@ class SpritesheetWindow:
         na = max(1, self._safe_int(self.num_angles_var, 1))
         sp = self._safe_str(self.sprite_prefix_var).strip().upper() or "AB"
         ap = self._safe_str(self.anim_prefix_var).strip().upper() or "CD"
-        sl = self._safe_str(self.start_letter_var, "A").strip().upper() or "A"
+        sl = self._valid_start_letter()
+        if sl is None:
+            # Il chiamante fa unpacking: stringhe vuote invece di None
+            return ("", "")
         sa = self._safe_int(self.start_angle_var, 1)
 
         last_letter = chr(ord(sl) + nf - 1)
@@ -706,47 +732,42 @@ class SpritesheetWindow:
         sprite_code = self._safe_str(self.sprite_prefix_var).strip().upper() or "AB"
         anim_code = self._safe_str(self.anim_prefix_var).strip().upper() or "CD"
 
+        # Solo lettura: il progetto corrente non viene mai mutato qui.
+        # Chi crea/aggancia/salva è MainWindow, tramite il risultato passato a on_import.
+        project = self.get_project()
+
         profile = None
-        for p in self.project.profiles:
+        for p in project.profiles:
             if p.code == sprite_code:
                 profile = p
                 break
 
-        is_new_profile = False
-        if not profile:
-            profile = ProfileData(
-                name=f"Sprite {sprite_code}",
-                code=sprite_code,
-                animations=[],
-                folder_path=str(dest_dir)
-            )
-            self.project.profiles.append(profile)
-            is_new_profile = True
+        is_new_profile = profile is None
 
         existing_anim = None
-        for a in profile.animations:
-            if a.code == anim_code:
-                existing_anim = a
-                break
+        if profile is not None:
+            for a in profile.animations:
+                if a.code == anim_code:
+                    existing_anim = a
+                    break
 
-        if existing_anim:
+        if existing_anim is not None:
             answer = messagebox.askyesno(
                 "Conflitto",
                 f"Esiste già un'animazione con codice '{anim_code}' nel profilo "
                 f"'{sprite_code}'.\n\nSovrascrivere?"
             )
             if not answer:
-                if is_new_profile:
-                    self.project.profiles.remove(profile)
                 return False
-            profile.animations.remove(existing_anim)
 
+        # Costruzione locale dell'animazione: nessuna scrittura sul progetto corrente.
         anim = AnimationData(name=f"Animazione {anim_code}", code=anim_code, frames=[])
 
         by_letter = {}
+        root_path = self.get_root_path()
         for letter, angle, cell_index, filepath in files_info:
             try:
-                rel = str(Path(filepath).relative_to(self.project.root_path))
+                rel = str(Path(filepath).relative_to(root_path))
             except ValueError:
                 rel = str(filepath)
             by_letter.setdefault(letter, []).append((angle, rel))
@@ -762,16 +783,41 @@ class SpritesheetWindow:
                 ))
             anim.frames.append(fg)
 
-        profile.animations.append(anim)
-
-        if not profile.folder_path:
-            profile.folder_path = str(dest_dir)
-
-        pm = ProjectManager()
-        pm.current_project = self.project
-        pm._save_project()
+        if is_new_profile:
+            new_profile = ProfileData(
+                name=f"Sprite {sprite_code}",
+                code=sprite_code,
+                animations=[anim],
+                folder_path=str(dest_dir)
+            )
+            result = {
+                "tipo": "new_profile",
+                "profile_code": sprite_code,
+                "anim_code": anim_code,
+                "data": new_profile,
+            }
+        elif existing_anim is not None:
+            result = {
+                "tipo": "replace_anim",
+                "profile_code": sprite_code,
+                "anim_code": anim_code,
+                "data": anim,
+            }
+        else:
+            result = {
+                "tipo": "new_anim",
+                "profile_code": sprite_code,
+                "anim_code": anim_code,
+                "data": anim,
+            }
 
         if self.on_import:
-            self.on_import(profile)
+            try:
+                self.on_import(result)
+            except Exception as e:
+                # La callback non deve mai far fallire l'export: l'import è già
+                # riuscito lato spritesheet, l'errore riguarda solo l'aggancio
+                # al progetto fatto da MainWindow.
+                log.error(f"Errore in on_import dopo export spritesheet: {e}", exc_info=True)
 
         return True
