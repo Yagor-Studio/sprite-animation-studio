@@ -161,6 +161,7 @@ class SettingsWindow:
             "prev_frame": "Frame precedente",
             "next_angle": "Angolo successivo",
             "prev_angle": "Angolo precedente",
+            "export": "Esporta animazione",
         }
 
         grid = ttk.Frame(sc_tab)

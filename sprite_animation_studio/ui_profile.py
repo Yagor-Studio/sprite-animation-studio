@@ -1,11 +1,23 @@
 # sprite_animation_studio/ui_profile.py
 import tkinter as tk
+import unicodedata
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 
 from .models import ProfileData, AnimationData, FrameGroup, AngleData
 from .project_manager import ProjectManager
 from .constants import IMG_EXTENSIONS, DEFAULT_DURATION_MS
+
+
+def _ascii_alnum_upper(s: str) -> str:
+    """Ritorna la stringa filtrata ai soli caratteri ASCII alfanumerici, uppercase.
+
+    Le lettere accentate vengono ridotte alla lettera base (NFKD) prima del
+    filtro, cosi' "É" diventa "E" invece di essere scartata del tutto.
+    """
+    decomposed = unicodedata.normalize('NFKD', s).upper()
+    return "".join(c for c in decomposed if ("A" <= c <= "Z") or ("0" <= c <= "9"))
+
 
 class CreateProfileDialog:
     def __init__(self, parent, project, on_complete, pre_commit=None):
@@ -115,11 +127,16 @@ class CreateProfileDialog:
         if name:
             words = name.split()
             if len(words) >= 2:
-                base_code = (words[0][0] + words[1][0]).upper()
+                # Iniziale ASCII alfanumerica di ciascuna delle prime due parole
+                base_code = "".join(_ascii_alnum_upper(w)[:1] for w in words[:2])
             else:
-                base_code = name[:2].upper()
+                base_code = _ascii_alnum_upper(name)[:2]
+
             if len(base_code) < 2:
-                base_code = base_code + "X"
+                # Iniziali non valide o insufficienti: ripiega sui caratteri
+                # alfanumerici del nome intero, poi su "XX" se non ce ne sono.
+                filler = _ascii_alnum_upper(name)
+                base_code = filler[:2] if len(filler) >= 2 else "XX"
 
             # Proponi variante univoca se base_code è occupato
             proposed = self._propose_unique_code(base_code)
@@ -153,7 +170,7 @@ class CreateProfileDialog:
         # Prova varianti usando la seconda lettera della prima parola,
         # poi la terza, poi numeri
         name = self.profile_name.get().strip()
-        letters = [c for c in name.upper() if c.isalpha()]
+        letters = list(_ascii_alnum_upper(name))
         first = base[0]
 
         for c in letters:
@@ -219,7 +236,6 @@ class CreateProfileDialog:
         all_images = []
         for ext in IMG_EXTENSIONS:
             all_images.extend(root.rglob(f"*{ext}"))
-        all_images.extend(root.rglob("*.jpeg"))
 
         groups = {}
         valid_files = 0
@@ -230,11 +246,13 @@ class CreateProfileDialog:
                 code_full = stem[:4]
                 file_padre = code_full[:2]
                 figlio = code_full[2:4]
-                if file_padre == padre:
+                if file_padre.upper() == padre.upper():
                     rest = stem[4:]
                     if len(rest) >= 2 and rest[0].isalpha() and rest[1].isdigit():
                         letter = rest[0]
                         angle = int(rest[1])
+                        if not (0 <= angle <= 8):
+                            continue
                         if angle == 0:
                             angle = 1
                         groups.setdefault(figlio, {}).setdefault(letter, {}).setdefault(angle, []).append(f)
@@ -251,10 +269,11 @@ class CreateProfileDialog:
                                    (angle == 7 and mirror_angle == 3) or \
                                    (angle == 4 and mirror_angle == 6) or \
                                    (angle == 6 and mirror_angle == 4):
-                                    if mirror_angle not in groups[figlio][letter]:
-                                        groups[figlio][letter][mirror_angle] = []
-                                    if f not in groups[figlio][letter][mirror_angle]:
-                                        groups[figlio][letter][mirror_angle].append(f)
+                                    # La coppia speculare appartiene alla sua lettera (mirror_letter), non a "letter"
+                                    if mirror_angle not in groups[figlio].setdefault(mirror_letter, {}):
+                                        groups[figlio][mirror_letter][mirror_angle] = []
+                                    if f not in groups[figlio][mirror_letter][mirror_angle]:
+                                        groups[figlio][mirror_letter][mirror_angle].append(f)
                                         valid_files += 1
 
         if not groups or valid_files == 0:

@@ -3,7 +3,6 @@
 import tkinter as tk
 from tkinter import messagebox
 import sys
-import traceback
 
 from .constants import APP_NAME, APP_VERSION
 from .logger import log, get_log_path

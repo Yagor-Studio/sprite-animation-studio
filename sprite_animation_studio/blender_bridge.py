@@ -1,4 +1,4 @@
--o# sprite_animation_studio/blender_bridge.py
+# sprite_animation_studio/blender_bridge.py
 import json
 from pathlib import Path
 from typing import Callable, Optional

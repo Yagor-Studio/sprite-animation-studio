@@ -1,6 +1,6 @@
 # sprite_animation_studio/timeline.py
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 from PIL import Image
 
 from .models import AnimationData, FrameGroup, AngleData

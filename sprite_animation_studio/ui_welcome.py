@@ -1,7 +1,10 @@
 # sprite_animation_studio/ui_welcome.py
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import filedialog, messagebox
 from pathlib import Path
+from datetime import datetime
+import os
+import subprocess
 import sys
 
 try:
@@ -13,6 +16,20 @@ except ImportError:
 from .constants import APP_NAME, APP_VERSION, PROJECT_EXTENSION
 from .project_manager import ProjectManager, ProjectAlreadyExists
 from .logger import log, open_log_folder
+
+
+def _open_folder_in_explorer(path: str) -> None:
+    """Apre la cartella nel file manager di sistema."""
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", path])
+        else:
+            subprocess.run(["xdg-open", path])
+    except Exception as e:
+        # Tkinter inghiottirebbe l'eccezione nel callback: la logghiamo noi
+        log.error(f"Impossibile aprire la cartella {path}: {e}", exc_info=True)
 
 
 def ask_load_backup_dialog(parent, corrupt_path: Path,
@@ -182,35 +199,83 @@ class NewProjectWindow:
             self.project_path.set(path)
 
     def _ask_existing_project_action(self, sas_path):
-        """Dialog a 3 scelte per gestire un progetto già esistente.
+        """Dialog per gestire un progetto già esistente: mostra una scheda
+        con i dati del progetto e chiede cosa fare.
         Ritorna: 'open' | 'overwrite' | None (annulla).
         """
+        # Lettura in sola lettura: _try_load non tocca file né recenti.
+        # Se fallisce il dialog si apre comunque, in modalità degradata:
+        # "Apri esistente" deve restare la via d'accesso al recupero C-09.
+        pm = ProjectManager()
+        existing = pm._try_load(sas_path)
+        is_readable = existing is not None
+
+        if is_readable:
+            folder = str(sas_path.parent)
+            try:
+                created = datetime.fromisoformat(existing.created).strftime("%d/%m/%Y %H:%M")
+            except (TypeError, ValueError):
+                # Formato inatteso o campo vuoto: mostra il valore grezzo
+                created = existing.created or "—"
+            try:
+                last_saved = datetime.fromtimestamp(
+                    sas_path.stat().st_mtime).strftime("%d/%m/%Y %H:%M")
+            except OSError:
+                last_saved = "sconosciuto"
+            num_profiles = len(existing.profiles)
+            num_animations = sum(len(p.animations) for p in existing.profiles)
+            num_frames = sum(len(a.frames) for p in existing.profiles for a in p.animations)
+
+            rows = [
+                ("Nome", existing.name),
+                ("Percorso", folder),
+                ("Creato", created),
+                ("Librerie", str(num_profiles)),
+                ("Animazioni", str(num_animations)),
+                ("Frame totali", str(num_frames)),
+                ("Ultimo salvataggio", last_saved),
+            ]
+
         win = tk.Toplevel(self.window)
         win.title("Progetto già esistente")
-        win.geometry("580x330")
         win.configure(bg='#2b2b2b')
         win.transient(self.window)
         win.grab_set()
         win.resizable(False, False)
         win.focus_force()
 
-        # Centra rispetto alla finestra principale
-        self.window.update_idletasks()
-        px = self.window.winfo_x() + (self.window.winfo_width() - 580) // 2
-        py = self.window.winfo_y() + (self.window.winfo_height() - 330) // 2
-        win.geometry(f"+{px}+{py}")
-
-        tk.Label(win, text="Esiste già un progetto con questo nome",
+        tk.Label(win, text="Progetto già esistente",
                  font=('Segoe UI', 14, 'bold'),
-                 bg='#2b2b2b', fg='#ffffff').pack(pady=(20, 10))
+                 bg='#2b2b2b', fg='#ffffff').pack(pady=(20, 12))
 
-        text = (
-            f"{sas_path}\n\n"
-            f"Cosa vuoi fare?"
-        )
-        tk.Label(win, text=text, font=('Segoe UI', 9),
-                 bg='#2b2b2b', fg='#aaaaaa',
-                 justify='center', wraplength=520).pack(padx=30)
+        if is_readable:
+            # Scheda informativa: font monospace per allineare le colonne
+            info = tk.Frame(win, bg='#1e1e1e', padx=16, pady=12)
+            info.pack(fill='x', padx=30)
+
+            for row, (label, value) in enumerate(rows):
+                tk.Label(info, text=f"{label}:", font=('Consolas', 10),
+                         bg='#1e1e1e', fg='#888888',
+                         anchor='w').grid(row=row, column=0, sticky='nw',
+                                          padx=(0, 12), pady=1)
+                value_label = tk.Label(info, text=value, font=('Consolas', 10),
+                                       bg='#1e1e1e', fg='#ffffff',
+                                       anchor='w', justify='left', wraplength=400)
+                value_label.grid(row=row, column=1, sticky='w', pady=1)
+                if label == "Percorso":
+                    # Percorso cliccabile: apre la cartella nel file manager
+                    value_label.configure(fg='#4a9eff', cursor='hand2')
+                    value_label.bind('<Button-1>',
+                                     lambda e: _open_folder_in_explorer(folder))
+        else:
+            # Modalità degradata: al posto della scheda, solo l'avviso
+            warning = ("⚠ Il progetto esistente è illeggibile.\n"
+                       "Puoi aprirlo per tentare il recupero dal backup, "
+                       "oppure sovrascriverlo per crearne uno nuovo.")
+            tk.Label(win, text=warning, font=('Segoe UI', 10),
+                     bg='#2b2b2b', fg='#ff8080',
+                     wraplength=520, justify='left',
+                     anchor='w').pack(fill='x', padx=30)
 
         result = {'value': None}
 
@@ -220,32 +285,45 @@ class NewProjectWindow:
             win.destroy()
 
         btn_frame = tk.Frame(win, bg='#2b2b2b')
-        btn_frame.pack(pady=25)
+        btn_frame.pack(pady=(20, 10))
 
-        tk.Button(btn_frame, text="Apri il progetto esistente",
-                  font=('Segoe UI', 10, 'bold'),
-                  bg='#4a9eff', fg='white', relief='flat',
-                  padx=18, pady=10,
-                  command=lambda: choose("open")).pack(side='left', padx=6)
+        btn_style = dict(font=('Segoe UI', 10), fg='white', relief='flat',
+                         padx=14, pady=8)
 
-        tk.Button(btn_frame, text="Crea nuovo (sovrascrive)",
-                  font=('Segoe UI', 10),
-                  bg='#555555', fg='white', relief='flat',
-                  padx=18, pady=10,
-                  command=lambda: choose("overwrite")).pack(side='left', padx=6)
+        tk.Button(btn_frame, text="Crea copia", bg='#555555',
+                  state='disabled', disabledforeground='#888888',
+                  **btn_style).grid(row=0, column=0, padx=5)
+        tk.Label(btn_frame, text="in arrivo", font=('Segoe UI', 8),
+                 bg='#2b2b2b', fg='#888888').grid(row=1, column=0)
 
-        tk.Button(btn_frame, text="Annulla",
-                  font=('Segoe UI', 10),
-                  bg='#555555', fg='white', relief='flat',
-                  padx=18, pady=10,
-                  command=lambda: choose(None)).pack(side='left', padx=6)
+        tk.Button(btn_frame, text="Apri esistente", bg='#555555',
+                  command=lambda: choose("open"),
+                  **btn_style).grid(row=0, column=1, padx=5, sticky='n')
 
-        hint = ("Sovrascrivendo, il progetto attuale verrà copiato in "
-                ".sas.bak prima di essere sostituito.\n"
+        tk.Button(btn_frame, text="Crea nuovo (sovrascrive)", bg='#8b3a3a',
+                  command=lambda: choose("overwrite"),
+                  **btn_style).grid(row=0, column=2, padx=5, sticky='n')
+
+        tk.Button(btn_frame, text="Annulla", bg='#555555',
+                  command=lambda: choose(None),
+                  **btn_style).grid(row=0, column=3, padx=5, sticky='n')
+
+        hint = ("Sovrascrivendo, il progetto attuale verrà copiato in\n"
+                f"{sas_path.stem}.sas.overwritten_<timestamp>.bak "
+                "prima di essere sostituito.\n"
                 "I PNG degli sprite restano intatti sul disco.")
         tk.Label(win, text=hint, font=('Segoe UI', 8),
                  bg='#2b2b2b', fg='#888888',
-                 justify='center').pack(padx=30, pady=(0, 10))
+                 justify='center', wraplength=520).pack(padx=30, pady=(0, 14))
+
+        # Centra rispetto alla finestra principale; la dimensione dipende
+        # dal contenuto (un percorso lungo va a capo su più righe)
+        self.window.update_idletasks()
+        win.update_idletasks()
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        px = self.window.winfo_x() + (self.window.winfo_width() - w) // 2
+        py = self.window.winfo_y() + (self.window.winfo_height() - h) // 2
+        win.geometry(f"+{px}+{py}")
 
         self.window.wait_window(win)
         return result['value']

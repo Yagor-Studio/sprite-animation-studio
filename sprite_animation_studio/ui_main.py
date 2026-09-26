@@ -9,12 +9,12 @@ import time
 from .history import ProjectHistory
 from .logger import log
 from .constants import APP_NAME, APP_VERSION, DEFAULT_DURATION_MS, PROJECT_EXTENSION, IMG_EXTENSIONS
-from .models import AnimationData, FrameGroup, AngleData, ProfileData
+from .models import AnimationData, FrameGroup, AngleData
 from .timeline import TimelineModel
 from .project_manager import ProjectManager
-from .logger import log
 from .ui_profile import CreateProfileDialog
 from .ui_welcome import WelcomeScreen, ask_load_backup_dialog
+from .ui_export import ExportAnimationDialog
 from .settings import Settings
 
 # Sentinel di ritorno per _create_mirrored_png: segnala che il file di
@@ -63,7 +63,6 @@ class ToolTip:
 
         wx = self.widget.winfo_rootx()
         wy = self.widget.winfo_rooty()
-        ww = self.widget.winfo_width()
         wh = self.widget.winfo_height()
 
         tw_w = tw.winfo_reqwidth()
@@ -272,7 +271,8 @@ class MainWindow:
         tools_menu.add_cascade(label="Sfondo viewer", menu=view_menu)
   
         tools_menu.add_separator()
-        tools_menu.add_command(label="Esporta… (prossimamente)", state='disabled')
+        tools_menu.add_command(label="Esporta animazione…",
+                               command=self._open_export_animation)
 
         menubar.add_cascade(label="Strumenti", menu=tools_menu)
 
@@ -1379,7 +1379,7 @@ class MainWindow:
                 f"'{profile.code}'.\n\n"
                 f"Se procedi, la libreria"
                 + (f" e le sue {len(profile.animations)} animazioni" if a_idx == -1 else "")
-                + f" verranno svuotate.\n\nContinuare comunque?"
+                + " verranno svuotate.\n\nContinuare comunque?"
             ):
                 self.info_lbl.config(text="Aggiornamento annullato (scansione vuota)")
                 return
@@ -1606,6 +1606,7 @@ class MainWindow:
             "prev_frame": lambda: self._step_frame(-1),
             "next_angle": self._next_angle,
             "prev_angle": self._prev_angle,
+            "export":     self._open_export_animation,
         }
         
         for action, configured in s.items():
@@ -2275,7 +2276,7 @@ class MainWindow:
                                           text=f"{frame_group.letter}",
                                           fill='#888888', font=('Segoe UI', 7, 'bold'))
 
-            rect_id = self.thumb_canvas.create_rectangle(
+            _ = self.thumb_canvas.create_rectangle(
                 x - 4, y - 4, x + thumb_w + 4, y + thumb_h + 20,
                 outline='', fill='', tags=(f'thumb_{i}',)
             )
@@ -2775,6 +2776,39 @@ class MainWindow:
         self.info_lbl.config(text="↶ stato ripristinato")
 
         
+    def _open_export_animation(self):
+        # Selezione corrente nell'albero: un profilo (libreria padre) o
+        # un'animazione figlia hanno priorità sull'animazione caricata
+        sel = self.tree.selection()
+        profile = anim = None
+        if sel and sel[0] in self.tree_item_map:
+            p_idx, a_idx = self.tree_item_map[sel[0]]
+            if 0 <= p_idx < len(self.project.profiles):
+                profile = self.project.profiles[p_idx]
+                if 0 <= a_idx < len(profile.animations):
+                    anim = profile.animations[a_idx]
+
+        target_profile_code = None
+        if profile is not None and anim is not None:
+            # Animazione figlia selezionata: comportamento attuale
+            default_path = self.project.root_path / f"{profile.code}_{anim.code}.png"
+        elif profile is not None:
+            # Libreria padre selezionata: il dialog mostra tutte le sue
+            # animazioni, anche se la timeline è vuota
+            target_profile_code = profile.code
+            default_path = self.project.root_path / f"{profile.code}.png"
+        else:
+            if self._loaded_anim_ref is None:
+                messagebox.showinfo("Info", "Nessuna animazione caricata.")
+                return
+            profile_code, anim_code = self._loaded_anim_ref
+            default_path = self.project.root_path / f"{profile_code}_{anim_code}.png"
+
+        ExportAnimationDialog(self.root, self.timeline.frames,
+                              self.timeline.current_angle, default_path,
+                              self.settings, project=self.project,
+                              target_profile_code=target_profile_code)
+
     def _open_spritesheet_tool(self):
         from .ui_spritesheet import SpritesheetWindow
 

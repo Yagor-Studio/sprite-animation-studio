@@ -41,7 +41,11 @@ def manifest_to_models(manifest: dict, project_root: Path) -> Tuple[ProfileData,
         letter = (f_data.get("letter") or "").strip()
         if not letter:
             continue
-        duration = int(f_data.get("duration_ms", DEFAULT_DURATION_MS))
+        raw_duration = f_data.get("duration_ms", DEFAULT_DURATION_MS)
+        try:
+            duration = int(raw_duration)
+        except (TypeError, ValueError):
+            duration = DEFAULT_DURATION_MS
 
         angles: List[AngleData] = []
         for a_data in f_data.get("angles", []) or []:
@@ -141,7 +145,6 @@ def apply_manifest_to_project(project, manifest: dict, project_root: Path):
 
         # Mappa lettera -> indice nell'animazione esistente
         by_letter = {fg.letter: i for i, fg in enumerate(target_anim.frames)}
-        added = False
         for new_fg in new_anim.frames:
             if new_fg.letter in by_letter:
                 target_anim.frames[by_letter[new_fg.letter]] = new_fg
@@ -149,7 +152,6 @@ def apply_manifest_to_project(project, manifest: dict, project_root: Path):
                 # Inserisci mantenendo l'ordine alfabetico
                 target_anim.frames.append(new_fg)
                 target_anim.frames.sort(key=lambda f: f.letter)
-                added = True
         if not target_profile.folder_path and new_profile.folder_path:
             target_profile.folder_path = new_profile.folder_path
         return target_profile, target_anim, "live_updated"

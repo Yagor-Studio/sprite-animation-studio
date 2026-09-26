@@ -27,14 +27,40 @@ class ProjectManager:
 
         Se esiste già un .sas con lo stesso nome e force=False,
         solleva ProjectAlreadyExists.
-        Se force=True, lo sovrascrive — ma il .sas precedente viene
-        conservato come .bak da _save_project() prima della sostituzione.
+        Se force=True, lo sovrascrive — ma il .sas precedente viene prima
+        copiato in <nome>.sas.overwritten_<timestamp>.bak, che nessun
+        salvataggio successivo tocca (il .bak di _save_project() invece
+        viene riscritto a ogni salvataggio). Allo stesso modo, se esiste,
+        il .bak viene copiato in <nome>.sas.bak.overwritten_<timestamp>.bak.
         """
         project_path = root_path / name
         sas_path = project_path / f"{name}{PROJECT_EXTENSION}"
 
         if sas_path.exists() and not force:
             raise ProjectAlreadyExists(sas_path)
+
+        if force and sas_path.exists():
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            permanent_backup = sas_path.with_name(
+                f"{sas_path.stem}.sas.overwritten_{timestamp}.bak")
+            try:
+                shutil.copy2(sas_path, permanent_backup)
+                log.info(f"Progetto sovrascritto: backup permanente in {permanent_backup}")
+            except OSError as e:
+                # Non blocchiamo la creazione: resta il .bak di _save_project()
+                log.warning(f"Backup permanente di {sas_path.name} non riuscito: {e}")
+
+            # Anche il .bak: se il .sas è corrotto è l'unica copia buona, e
+            # _save_project() sta per sovrascriverlo con il file corrotto
+            backup_path = sas_path.with_suffix(sas_path.suffix + BACKUP_SUFFIX)
+            if backup_path.exists():
+                permanent_bak = backup_path.with_name(
+                    f"{backup_path.name}.overwritten_{timestamp}.bak")
+                try:
+                    shutil.copy2(backup_path, permanent_bak)
+                    log.info(f"Progetto sovrascritto: .bak conservato in {permanent_bak}")
+                except OSError as e:
+                    log.warning(f"Copia permanente di {backup_path.name} non riuscita: {e}")
 
         project_path.mkdir(parents=True, exist_ok=True)
         project = ProjectData(

@@ -1,6 +1,5 @@
 # sprite_animation_studio/settings.py
 import json
-from pathlib import Path
 from .constants import CONFIG_DIR
 from .logger import log
 
@@ -27,6 +26,7 @@ DEFAULTS = {
         "prev_frame":      "<Control-Left>",
         "next_angle":      "<Control-Up>",
         "prev_angle":      "<Control-Down>",
+        "export":          "<Control-e>",
     },
     "paths": {
         "last_export_dir": "",

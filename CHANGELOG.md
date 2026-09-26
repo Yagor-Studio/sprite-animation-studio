@@ -1,29 +1,36 @@
-## v0.8.4 — 25 settembre 2026
+## v0.8.5 — 26 settembre 2026
 
-Consolidamento sicurezza dati. Nessuna feature nuova visibile, ma il programma non perde più lavoro silenziosamente.
+Release di consolidamento. Fix critici, prima suite di test, editor di esportazione.
 
-### Recupero da file corrotto
-- Un .sas illeggibile viene rinominato in .sas.corrupt prima di qualsiasi operazione. Il file corrotto non viene mai distrutto.
-- Se esiste un .bak valido, l'utente sceglie con un dialog se caricarlo. Il backup viene ripristinato con scrittura atomica (tmp + replace).
-- Il dialog "Progetto corrotto" compare sia dalla welcome sia da File → Apri progetto.
-- Tutti gli eventi (corrotto rinominato, backup usato, annullamento) finiscono nel log.
+### Sicurezza dati
+- Recupero da file corrotto con dialog (C-09)
+- Backup permanente su sovrascrittura progetto (C-08a)
+- Conservazione .bak su progetto corrotto (C-08a.1)
 
-### Durata dei frame
-- La modifica della durata non si applica più alla frame sbagliata quando si cambia contesto (animazione, eliminazione, undo) con un debounce pendente.
-- Il campo della durata si aggiorna correttamente al cambio frame.
-- Il click fuori dallo spinbox libera il focus e applica il valore.
+### Editor e timeline
+- Punto unico di caricamento animazione (C-01 minima)
+- Player non si blocca su svuotamento timeline (G-11)
+- Fix durata: valore non si applica più al frame sbagliato
+- Scorciatoie: rimozione dalla lista Impostazioni (M3)
 
-### Timeline e player
-- Il player non resta bloccato dopo che la timeline viene svuotata o sostituita.
-- Un unico punto di caricamento dell'animazione nella timeline. Le operazioni su durata, clona e specchia, elimina, agiscono sempre sull'animazione mostrata.
+### Export
+- Nuovo editor di esportazione con timeline a blocchi (G14)
+- Esportazione APNG/GIF con scaling proporzionale
+- Preview animata, lucchetti per blocco, shortcut Ctrl+E
+- Export da libreria padre, non solo da animazione figlia
 
-### Scorciatoie
-- Rimozione di una scorciatoia dalla lista delle Impostazioni, con conferma.
-- Il dialog di cattura non accumula più pulsanti "Annulla" a ogni tasto premuto.
+### Blender
+- Fix bridge Blender rotto da settimane (C-04)
+- Manifest con duration non numerica non crasha più
 
 ### Spritesheet
-- La finestra Spritesheet non conserva più un riferimento al progetto. L'import passa da callback: il progetto corrente non viene mai mutato dalla finestra, e le modifiche non si perdono più dopo un undo.
+- Finestra Spritesheet non tiene più il progetto (C-11)
+- 4 bug in _scan_folder (prefisso, angoli, mirror, jpeg)
+
+### Test
+- Prima suite pytest (102 test, funzioni pure)
+- grab_tool: 35 test, chunk grAb validato in SLADE
 
 ### Altro
-- .gitignore aggiornato per __pycache__/.
-- CLAUDE.md: load_project aggiunto tra i file sensibili.
+- Codici libreria ASCII-safe (accenti ridotti con NFKD)
+- __pycache__ in .gitignore

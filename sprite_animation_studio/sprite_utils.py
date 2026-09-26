@@ -1,9 +1,7 @@
 # sprite_animation_studio/sprite_utils.py
 import re
-from pathlib import Path
 from PIL import Image
 
-from .constants import DEFAULT_DURATION_MS, IMG_EXTENSIONS
 from .logger import log
 
 def build_pattern(prefix: str) -> re.Pattern:
